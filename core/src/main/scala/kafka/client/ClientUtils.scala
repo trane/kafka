@@ -73,7 +73,7 @@ object ClientUtils extends Logging{
   }
 
   /**
-   * Parse a list of broker urls in the form host1:port1, host2:port2, ... 
+   * Parse a list of broker urls in the form host1:port1:secure1, host2:port2:secure2, ... 
    */
   def parseBrokerList(brokerListStr: String): Seq[Broker] = {
     val brokersStr = Utils.parseCsvList(brokerListStr)
@@ -84,7 +84,8 @@ object ClientUtils extends Logging{
       val brokerInfos = brokerStr.split(":")
       val hostName = brokerInfos(0)
       val port = brokerInfos(1).toInt
-      new Broker(brokerId, hostName, port)
+      val secure = if (brokerInfos.length > 2) brokerInfos(2).toBoolean else false
+      new Broker(brokerId, hostName, port, secure)
     })
   }
   

@@ -64,6 +64,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = SystemTime) extends Logg
     socketServer = new SocketServer(config.brokerId,
                                     config.hostName,
                                     config.port,
+                                    config.secure,
+                                    config.securityConfig,
                                     config.numNetworkThreads,
                                     config.queuedMaxRequests,
                                     config.socketSendBufferBytes,

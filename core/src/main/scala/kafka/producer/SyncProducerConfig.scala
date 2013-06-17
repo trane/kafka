@@ -19,6 +19,7 @@ package kafka.producer
 
 import java.util.Properties
 import kafka.utils.VerifiableProperties
+import kafka.security.SecurityConfig
 
 class SyncProducerConfig private (val props: VerifiableProperties) extends SyncProducerConfigShared {
   def this(originalProps: Properties) {
@@ -31,6 +32,15 @@ class SyncProducerConfig private (val props: VerifiableProperties) extends SyncP
 
   /** the port on which the broker is running */
   val port = props.getInt("port")
+  
+  /** the broker is running SSL */
+  val secure = props.getBoolean("secure", false)
+  
+  /** security config */
+  val securityConfig = if (secure) 
+    new SecurityConfig(props.getString("security.config.file", "config/client.security.properties"))
+  else 
+    null
 }
 
 trait SyncProducerConfigShared {

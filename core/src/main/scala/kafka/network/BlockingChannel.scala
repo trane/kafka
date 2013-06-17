@@ -21,6 +21,8 @@ import java.net.InetSocketAddress
 import java.nio.channels._
 import kafka.utils.{nonthreadsafe, Logging}
 import kafka.api.RequestOrResponse
+import org.norther.tammi.acorn.nio.SSLSocketChannel
+import javax.net.ssl.SSLContext
 
 
 object BlockingChannel{
@@ -33,7 +35,8 @@ object BlockingChannel{
  */
 @nonthreadsafe
 class BlockingChannel( val host: String, 
-                       val port: Int, 
+                       val port: Int,
+                       val secure: Boolean,
                        val readBufferSize: Int, 
                        val writeBufferSize: Int, 
                        val readTimeoutMs: Int ) extends Logging {
@@ -45,19 +48,20 @@ class BlockingChannel( val host: String,
   
   def connect() = lock synchronized  {
     if(!connected) {
-      channel = SocketChannel.open()
+      channel = if (secure) SSLSocketChannel.makeSecureClientConnection(SocketChannel.open()) else SocketChannel.open()
       if(readBufferSize > 0)
         channel.socket.setReceiveBufferSize(readBufferSize)
       if(writeBufferSize > 0)
         channel.socket.setSendBufferSize(writeBufferSize)
-      channel.configureBlocking(true)
+      if (secure) channel.asInstanceOf[SSLSocketChannel].simulateBlocking(true) else channel.configureBlocking(true)
       channel.socket.setSoTimeout(readTimeoutMs)
       channel.socket.setKeepAlive(true)
       channel.socket.setTcpNoDelay(true)
       channel.connect(new InetSocketAddress(host, port))
 
       writeChannel = channel
-      readChannel = Channels.newChannel(channel.socket().getInputStream)
+      //readChannel = Channels.newChannel(channel.socket().getInputStream)
+      readChannel = Channels.newChannel(Channels.newInputStream(channel))
       connected = true
       // settings may not match what we requested above
       val msg = "Created socket with SO_TIMEOUT = %d (requested %d), SO_RCVBUF = %d (requested %d), SO_SNDBUF = %d (requested %d)."

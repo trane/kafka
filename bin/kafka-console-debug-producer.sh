@@ -1,3 +1,4 @@
+#!/bin/bash
 # Licensed to the Apache Software Foundation (ASF) under one or more
 # contributor license agreements.  See the NOTICE file distributed with
 # this work for additional information regarding copyright ownership.
@@ -12,21 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# see kafka.consumer.ConsumerConfig for more details
 
-# Zookeeper connection string
-# comma separated host:port pairs, each corresponding to a zk
-# server. e.g. "127.0.0.1:3000,127.0.0.1:3001,127.0.0.1:3002"
-zookeeper.connect=127.0.0.1:2181
-
-# timeout in ms for connecting to zookeeper
-zookeeper.connection.timeout.ms=1000000
-
-#consumer group id
-group.id=test-consumer-group
-
-#consumer timeout
-#consumer.timeout.ms=5000
-
-# Security config
-security.config.file=config/client.security.properties
+base_dir=$(dirname $0)
+$base_dir/kafka-run-debug-class.sh kafka.producer.ConsoleProducer $@
