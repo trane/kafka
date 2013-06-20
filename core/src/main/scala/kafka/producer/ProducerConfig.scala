@@ -121,6 +121,8 @@ class ProducerConfig private (val props: VerifiableProperties)
    * a message the metadata is never refreshed
    */
   val topicMetadataRefreshIntervalMs = props.getInt("topic.metadata.refresh.interval.ms", 600000)
+  
+  val securityConfigFile = props.getString("security.config.file", null);
 
   validate(this)
 }

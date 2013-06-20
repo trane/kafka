@@ -404,6 +404,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
       val topicsMetadata = ClientUtils.fetchTopicMetadata(myTopicThreadIdsMap.keySet,
                                                           brokers,
                                                           config.clientId,
+                                                          config.securityConfigFile,
                                                           config.socketTimeoutMs,
                                                           correlationId.getAndIncrement).topicsMetadata
       val partitionsPerTopicMap = new mutable.HashMap[String, Seq[Int]]

@@ -18,10 +18,10 @@
 package kafka.producer
 
 import java.util.Properties
-import kafka.utils.VerifiableProperties
+import kafka.utils.{VerifiableProperties,Logging}
 import kafka.security.SecurityConfig
 
-class SyncProducerConfig private (val props: VerifiableProperties) extends SyncProducerConfigShared {
+class SyncProducerConfig private (val props: VerifiableProperties) extends SyncProducerConfigShared with Logging {
   def this(originalProps: Properties) {
     this(new VerifiableProperties(originalProps))
     // no need to verify the property since SyncProducerConfig is supposed to be used internally
@@ -37,8 +37,15 @@ class SyncProducerConfig private (val props: VerifiableProperties) extends SyncP
   val secure = props.getBoolean("secure", false)
   
   /** security config */
-  val securityConfig = if (secure) 
-    new SecurityConfig(props.getString("security.config.file", "config/client.security.properties"))
+  val securityConfig = if (secure) {
+    info("Secure is Enabled");
+    val defaultSecurityConfigFile:String = "config/client.security.properties";
+    
+    if (!props.containsKey("security.config.file")){
+      warn("security.config.file is not defined, using default " + defaultSecurityConfigFile );
+    }
+    new SecurityConfig(props.getString("security.config.file", defaultSecurityConfigFile))
+  }
   else 
     null
 }

@@ -97,6 +97,11 @@ object ConsoleProducer {
                             .withRequiredArg
                             .describedAs("prop")
                             .ofType(classOf[String])
+                            
+    val securityConfigFileOpt = parser.accepts("security.config.file", "Security config file to use for SSL.")
+                                  .withRequiredArg
+                                  .describedAs("property file")
+                                  .ofType(classOf[java.lang.String])
 
 
     val options = parser.parse(args : _*)
@@ -122,6 +127,7 @@ object ConsoleProducer {
     val valueEncoderClass = options.valueOf(valueEncoderOpt)
     val readerClass = options.valueOf(messageReaderOpt)
     val socketBuffer = options.valueOf(socketBufferSizeOpt)
+    val securityConfigFile = options.valueOf(securityConfigFileOpt);
     val cmdLineProps = parseLineReaderArgs(options.valuesOf(propertyOpt))
     cmdLineProps.put("topic", topic)
 
@@ -140,6 +146,9 @@ object ConsoleProducer {
     props.put("key.serializer.class", keyEncoderClass)
     props.put("serializer.class", valueEncoderClass)
     props.put("send.buffer.bytes", socketBuffer.toString)
+    if (options.has(securityConfigFileOpt)){
+    	props.put("security.config.file", securityConfigFile)
+    }
     val reader = Class.forName(readerClass).newInstance().asInstanceOf[MessageReader[AnyRef, AnyRef]]
     reader.init(System.in, cmdLineProps)
 
