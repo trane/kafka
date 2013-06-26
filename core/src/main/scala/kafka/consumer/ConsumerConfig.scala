@@ -131,6 +131,9 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
    * Client id is specified by the kafka consumer client, used to distinguish different clients
    */
   val clientId = props.getString("client.id", groupId)
+  
+  /** security config file */
+  val securityConfigFile = props.getString("security.config.file",null);
 
   validate(this)
 }
