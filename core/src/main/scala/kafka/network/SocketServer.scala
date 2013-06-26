@@ -24,9 +24,7 @@ import java.io._
 import java.nio.channels._
 import kafka.utils._
 import kafka.common.KafkaException
-import org.norther.tammi.acorn.nio.SSLSocketChannel
-import kafka.security.Authentication
-import kafka.security.SecurityConfig
+import kafka.security._
 
 /**
  * An NIO socket server. The threading model is
@@ -344,7 +342,7 @@ private[kafka] class Processor(val id: Int,
       debug("Processor " + id + " listening to new connection from " + channel.socket.getRemoteSocketAddress)
       val (regChannel, sslsch) = if (channel.isInstanceOf[SSLSocketChannel]) {
         val sslsch = channel.asInstanceOf[SSLSocketChannel]
-        val rch = sslsch.getAdapteeChannel.asInstanceOf[SocketChannel]
+        val rch = sslsch.underlying.asInstanceOf[SocketChannel]
         (rch, sslsch)
       }  else (channel, null)
       val key = regChannel.register(selector, SelectionKey.OP_READ)
@@ -425,7 +423,9 @@ private[kafka] class Processor(val id: Int,
           }
         } catch {
           case e: Throwable => // just ignore SSL disconnect errors
-            secureSocketChannel
+            debug("SSLException: " + e)
+            close(key)
+            null
         }
       } else secureSocketChannel
     } else sch

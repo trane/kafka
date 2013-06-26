@@ -21,8 +21,7 @@ import java.net.InetSocketAddress
 import java.nio.channels._
 import kafka.utils.{nonthreadsafe, Logging}
 import kafka.api.RequestOrResponse
-import org.norther.tammi.acorn.nio.SSLSocketChannel
-import javax.net.ssl.SSLContext
+import kafka.security.SSLSocketChannel
 
 
 object BlockingChannel{
@@ -48,7 +47,7 @@ class BlockingChannel( val host: String,
   
   def connect() = lock synchronized  {
     if(!connected) {
-      channel = if (secure) SSLSocketChannel.makeSecureClientConnection(SocketChannel.open()) else SocketChannel.open()
+      channel = if (secure) SSLSocketChannel.makeSecureClientConnection(SocketChannel.open(), host, port) else SocketChannel.open()
       if(readBufferSize > 0)
         channel.socket.setReceiveBufferSize(readBufferSize)
       if(writeBufferSize > 0)
@@ -75,7 +74,7 @@ class BlockingChannel( val host: String,
   }
   
   def disconnect() = lock synchronized {
-    if(connected || channel != null) {
+    if(connected && channel != null) {
       // closing the main socket channel *should* close the read channel
       // but let's do it to be sure.
       swallow(channel.close())
