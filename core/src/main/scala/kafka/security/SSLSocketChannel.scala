@@ -154,6 +154,8 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
 
   def finishConnect(): Boolean = underlying.finishConnect()
 
+  def isReadable = finished && peerAppData.position > 0
+    
   def read(dst: ByteBuffer): Int = {
     this.synchronized {
       // If there is data available just return it

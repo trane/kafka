@@ -252,9 +252,12 @@ private[kafka] class Processor(val id: Int,
               iter.remove()
               if(key.isReadable)
                 read(key)
-              else if(key.isWritable)
-                write(key)
-              else if(!key.isValid)
+              else if(key.isWritable) {
+                if (write(key)) {
+                  // We need this to read buffered SSL data
+                  read(key)
+                }
+              } else if(!key.isValid)
                 close(key)
               else
                 throw new IllegalStateException("Unrecognized key state for processor thread.")
@@ -297,6 +300,9 @@ private[kafka] class Processor(val id: Int,
           key.interestOps(SelectionKey.OP_READ)
           key.attach(ChannelTuple(null, channelTuple.sslChannel))
           curr.request.updateRequestMetrics
+          if (channelTuple.sslChannel != null && channelTuple.sslChannel.isReadable) {
+            read(key)
+          }
         } else {
           trace("Socket server received response to send, registering for write: " + curr)
           key.interestOps(SelectionKey.OP_WRITE)
@@ -315,7 +321,7 @@ private[kafka] class Processor(val id: Int,
   
   private def close(key: SelectionKey) {
     try {
-      val channel = channelFor(key, -1)
+      val channel = channelFor(key)
       debug("Closing connection from " + channel.socket.getRemoteSocketAddress())
       swallowError(channel.socket().close())
       swallowError(channel.close())
@@ -384,10 +390,10 @@ private[kafka] class Processor(val id: Int,
   /*
    * Process writes to ready sockets
    */
-  def write(key: SelectionKey) {
+  def write(key: SelectionKey): Boolean = {
     val channelTuple = key.attachment.asInstanceOf[ChannelTuple]
     val socketChannel = channelFor(key, SelectionKey.OP_WRITE)
-    if (socketChannel == null) return
+    if (socketChannel == null) return false
     val response = channelTuple.value.asInstanceOf[RequestChannel.Response]
     val responseSend = response.responseSend
     if(responseSend == null)
@@ -399,14 +405,16 @@ private[kafka] class Processor(val id: Int,
       key.attach(ChannelTuple(null, channelTuple.sslChannel))
       trace("Finished writing, registering for read on connection " + socketChannel.socket.getRemoteSocketAddress())
       key.interestOps(SelectionKey.OP_READ)
+      if (channelTuple.sslChannel != null) channelTuple.sslChannel.isReadable else false
     } else {
       trace("Did not finish writing, registering for write again on connection " + socketChannel.socket.getRemoteSocketAddress())
       key.interestOps(SelectionKey.OP_WRITE)
       wakeup()
+      false
     }
   }
 
-  private def channelFor(key: SelectionKey, ops: Int = SelectionKey.OP_READ) = {
+  private def channelFor(key: SelectionKey, ops: Int = -1) = {
     val sch = key.channel.asInstanceOf[SocketChannel]
     if (secure) {
       val secureSocketChannel = key.attachment.asInstanceOf[ChannelTuple].sslChannel
