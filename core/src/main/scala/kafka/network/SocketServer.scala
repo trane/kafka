@@ -25,6 +25,7 @@ import java.nio.channels._
 import kafka.utils._
 import kafka.common.KafkaException
 import kafka.security._
+import javax.net.ssl.SSLException
 
 /**
  * An NIO socket server. The threading model is
@@ -252,12 +253,9 @@ private[kafka] class Processor(val id: Int,
               iter.remove()
               if(key.isReadable)
                 read(key)
-              else if(key.isWritable) {
-                if (write(key)) {
-                  // We need this to read buffered SSL data
-                  read(key)
-                }
-              } else if(!key.isValid)
+              else if(key.isWritable)
+                write(key)
+              else if(!key.isValid)
                 close(key)
               else
                 throw new IllegalStateException("Unrecognized key state for processor thread.")
@@ -300,9 +298,7 @@ private[kafka] class Processor(val id: Int,
           key.interestOps(SelectionKey.OP_READ)
           key.attach(ChannelTuple(null, channelTuple.sslChannel))
           curr.request.updateRequestMetrics
-          if (channelTuple.sslChannel != null && channelTuple.sslChannel.isReadable) {
-            read(key)
-          }
+          readBufferedSSLDataIfNeeded(key, channelTuple)
         } else {
           trace("Socket server received response to send, registering for write: " + curr)
           key.interestOps(SelectionKey.OP_WRITE)
@@ -323,8 +319,8 @@ private[kafka] class Processor(val id: Int,
     try {
       val channel = channelFor(key)
       debug("Closing connection from " + channel.socket.getRemoteSocketAddress())
-      swallowError(channel.socket().close())
       swallowError(channel.close())
+      swallowError(channel.socket().close())
     } finally {
       key.attach(null)
       swallowError(key.cancel())
@@ -390,10 +386,10 @@ private[kafka] class Processor(val id: Int,
   /*
    * Process writes to ready sockets
    */
-  def write(key: SelectionKey): Boolean = {
+  def write(key: SelectionKey) {
     val channelTuple = key.attachment.asInstanceOf[ChannelTuple]
     val socketChannel = channelFor(key, SelectionKey.OP_WRITE)
-    if (socketChannel == null) return false
+    if (socketChannel == null) return
     val response = channelTuple.value.asInstanceOf[RequestChannel.Response]
     val responseSend = response.responseSend
     if(responseSend == null)
@@ -405,12 +401,11 @@ private[kafka] class Processor(val id: Int,
       key.attach(ChannelTuple(null, channelTuple.sslChannel))
       trace("Finished writing, registering for read on connection " + socketChannel.socket.getRemoteSocketAddress())
       key.interestOps(SelectionKey.OP_READ)
-      if (channelTuple.sslChannel != null) channelTuple.sslChannel.isReadable else false
+      readBufferedSSLDataIfNeeded(key, channelTuple)
     } else {
       trace("Did not finish writing, registering for write again on connection " + socketChannel.socket.getRemoteSocketAddress())
       key.interestOps(SelectionKey.OP_WRITE)
       wakeup()
-      false
     }
   }
 
@@ -420,17 +415,16 @@ private[kafka] class Processor(val id: Int,
       val secureSocketChannel = key.attachment.asInstanceOf[ChannelTuple].sslChannel
       if (ops >= 0 && !secureSocketChannel.finished()) {
         try {
-          val next = secureSocketChannel.handshake(key.interestOps())
+          val next = secureSocketChannel.handshake(key.interestOps(), key)
           if (next == 0) {
             // when handshake is complete go back to read mode
             key.interestOps(SelectionKey.OP_READ)
-            null
-          } else {
+          } else if (next != SSLSocketChannel.runningTasks) {
             key.interestOps(next)
-            null
           }
+          null
         } catch {
-          case e: Throwable => // just ignore SSL disconnect errors
+          case e: SSLException => // just ignore SSL disconnect errors
             debug("SSLException: " + e)
             close(key)
             null
@@ -439,4 +433,22 @@ private[kafka] class Processor(val id: Int,
     } else sch
   }
 
+  private[this] def readBufferedSSLDataIfNeeded(key: SelectionKey, channelTuple: ChannelTuple) {
+    try {
+      if (channelTuple.sslChannel != null && channelTuple.sslChannel.isReadable) {
+        read(key)
+      }
+    } catch {
+     case e: EOFException => {
+        info("Closing socket connection to %s.".format(channelFor(key).socket.getInetAddress))
+        close(key)
+      } case e: InvalidRequestException => {
+        info("Closing socket connection to %s due to invalid request: %s".format(channelFor(key).socket.getInetAddress, e.getMessage))
+        close(key)
+      } case e: Throwable => {
+        error("Closing socket for " + channelFor(key).socket.getInetAddress + " because of error", e)
+        close(key)
+      }
+    }
+  }
 }

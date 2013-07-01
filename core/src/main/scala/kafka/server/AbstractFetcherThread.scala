@@ -66,8 +66,8 @@ abstract class AbstractFetcherThread(name: String, clientId: String, sourceBroke
   def handlePartitionsWithErrors(partitions: Iterable[TopicAndPartition])
 
   override def shutdown(){
-    super.shutdown()
     simpleConsumer.close()
+    super.shutdown()
   }
 
   override def doWork() {

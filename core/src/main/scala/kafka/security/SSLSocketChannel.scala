@@ -24,9 +24,9 @@ import java.nio.channels._
 import java.nio.channels.spi.SelectorProvider
 import javax.net.ssl._
 import javax.net.ssl.SSLEngineResult._
-//import java.util.concurrent.atomic.AtomicInteger
-//import java.util.concurrent.Executors
-//import java.util.concurrent.ThreadFactory
+import java.util.concurrent._
+import java.util.concurrent.atomic.AtomicInteger
+import kafka.utils.Logging
 
 object SSLSocketChannel {
 
@@ -74,30 +74,92 @@ object SSLSocketChannel {
     new SSLSocketChannel(sch, engine)
   }
   
-  /*
-  private[this] val counter = new AtomicInteger(0)
-  private[SSLSocketChannel] val executor = Executors.newCachedThreadPool(new ThreadFactory() {
+  /**
+   * This is for simulating slow networks. For production this should be set to false
+   */
+  val simulateSlowNetwork = false
+  
+  val runningTasks = -2
+  private[this] lazy val counter = new AtomicInteger(0)
+  private[kafka] lazy val executor = new ThreadPoolExecutor(2, 10,
+                                      60L, TimeUnit.SECONDS,
+                                      new SynchronousQueue[Runnable](),
+                                      new ThreadFactory() {
     override def newThread(r: Runnable): Thread = {
-      val thread = new Thread("SSLSession-Task-Thread-%d".format(counter.incrementAndGet()))
+      val thread = new Thread(r, "SSLSession-Task-Thread-%d".format(counter.incrementAndGet()))
       thread.setDaemon(true)
       thread
     }
   })
-  */
 }
+
 
 /**
  * An SSL based socket channel implemented based on JSSE doc
  * http://download.java.net/jdk8/docs/technotes/guides/security/jsse/JSSERefGuide.html
  */
 class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
-  extends SocketChannel(underlying.provider) {
-  //import SSLSocketChannel.executor
+  extends SocketChannel(underlying.provider) with Logging {
+  import SSLSocketChannel.executor
+
+  private[this] class SSLTasker(
+    val runnable: Runnable
+  ) extends Runnable {
+  
+    selectionKey.interestOps(0)
+  
+    override def run(): Unit = {
+      try {
+        runnable.run()
+        outer.synchronized {
+          handshakeStatus = sslEngine.getHandshakeStatus
+          handshakeStatus match {
+            case HandshakeStatus.NEED_WRAP =>
+              debug("sslTasker setting up to write for %s".format(underlying.socket.getRemoteSocketAddress))
+              selectionKey.interestOps(SelectionKey.OP_WRITE)
+            case HandshakeStatus.NEED_UNWRAP =>
+              // If socket data has already been read into buffer we have to consume it here
+              if (peerNetData.position > 0) {
+                debug("sslTasker found existing data %s. running hanshake for %s".format(peerNetData, underlying.socket.getRemoteSocketAddress))
+                val init = outer.handshake(SelectionKey.OP_READ, selectionKey)
+                if (init == 0) {
+                  // when handshake is complete go back to read mode
+                  debug("sslTasker setting up to read after hanshake")
+                  selectionKey.interestOps(SelectionKey.OP_READ)
+                } else if (init != SSLSocketChannel.runningTasks) {
+                  debug("sslTasker setting up for operation %d after hanshake for %s".format(init, underlying.socket.getRemoteSocketAddress))                  
+                  selectionKey.interestOps(init)
+                }
+              } else {
+                debug("sslTasker setting up to read for %s".format(underlying.socket.getRemoteSocketAddress))
+                selectionKey.interestOps(SelectionKey.OP_READ)
+              }
+            case HandshakeStatus.NEED_TASK =>
+              val runnable = sslEngine.getDelegatedTask
+              if (runnable != null) {
+                debug("sslTasker running next task for %s".format(underlying.socket.getRemoteSocketAddress))
+                executor.execute(new SSLTasker(runnable))
+                handshakeStatus = null
+              }
+              return
+            case _ =>
+              throw new SSLException("unexpected handshakeStatus: " + handshakeStatus)              
+          }
+          selectionKey.selector.wakeup()
+        }
+      } catch {
+        case t: Throwable =>
+          error("Unexpected exception", t)
+      }
+    }
+  }
+
+  private[this] val outer = this
   
   /**
    * The engine handshake status.
    */
-  private[this] var handshakeStatus: HandshakeStatus = HandshakeStatus.NOT_HANDSHAKING
+  @volatile private[this] var handshakeStatus: HandshakeStatus = HandshakeStatus.NOT_HANDSHAKING
 
   /**
    * The initial handshake ops.
@@ -118,7 +180,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   myNetData.limit(0)
   
   // This needs to match blocking flag and needs to be false
-  underlying.configureBlocking(blocking)
+  underlying.configureBlocking(false)
 
   /**
    * Simulate blocking with non-blocking underlying sockets. If the underlying socket
@@ -128,6 +190,8 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
    *  length is reached
    */
   private[this] var blocking = false
+  
+  @volatile private[this] var selectionKey: SelectionKey = null
 
   def simulateBlocking(b: Boolean) = { blocking = b }
 
@@ -164,7 +228,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
       } else if (underlying.socket.isInputShutdown) {
         throw new ClosedChannelException
       } else if (initialized != 0) {
-        handshake(SelectionKey.OP_READ)
+        handshake(SelectionKey.OP_READ, selectionKey)
         return 0
       } else if (shutdown) {
         shutdown()
@@ -211,21 +275,25 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
 
   def write(src: ByteBuffer): Int = {
     this.synchronized {
-      if (underlying.socket.isOutputShutdown) {
+      if (myNetData.hasRemaining) {
+        writeRaw(myNetData)
+        return 0
+      } else if (underlying.socket.isOutputShutdown) {
         throw new ClosedChannelException
       } else if (initialized != 0) {
-        handshake(SelectionKey.OP_WRITE)
+        handshake(SelectionKey.OP_WRITE, selectionKey)
         return 0
       } else if (shutdown) {
         shutdown()
         return -1
       }
   
-      // wrap the data
+      // Wrap data before writing it out
       val written = wrap(src)
       
       // Write the data out now
-      writeRaw(myNetData)
+      while (myNetData.hasRemaining)
+        writeRaw(myNetData)
       written
     }
   }
@@ -281,30 +349,75 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   /**
    * SSL Handshake
    * 
-   * @param SelectionKey mode
+   * @param SelectionKey mode o
+   * @param SelectionKey key
    * @return final SelectionKey mode
    */
-  def handshake(o: Int): Int = {
+  def handshake(o: Int, key: SelectionKey): Int = {
+    /**
+     * @return true if more data is expected to be written
+     */
+    def writeIfReadyAndNeeded(mustWrite: Boolean): Boolean = {
+      // Send handshake data to peer
+      if ((o & SelectionKey.OP_WRITE) != 0) {
+        writeRaw(myNetData)
+        myNetData.remaining > 0
+      } else mustWrite
+    }
+    /**
+     * @return true if more data is expected to be read
+     */
+    def readIfReadyAndNeeded(mustRead: Boolean): Boolean = {
+      // Read handshake data from peer
+      if ((o & SelectionKey.OP_READ) != 0) {
+        if (readRaw() < 0) {
+          shutdown = true
+          // Handle closed channel
+          underlying.close()
+          return true
+        }
+        // Process incoming handshaking data
+        val oldPos = peerNetData.position
+        unwrap()
+        // Return true if no data has been unwrapped. We need to read more data in that case.
+        oldPos == peerNetData.position       
+      } else mustRead
+    }
+    /**
+     * @return initialized state
+     */
     def localHandshake(): Int = {
       while (true) {
         handshakeStatus match {
           case HandshakeStatus.NOT_HANDSHAKING =>
             // Begin handshake
+            info("begin ssl handshake for %s".format(underlying.socket.getRemoteSocketAddress))
             sslEngine.beginHandshake()
             handshakeStatus = sslEngine.getHandshakeStatus
-            return o
           case HandshakeStatus.NEED_UNWRAP =>
-            // Prepare to read handshake data
-            return SelectionKey.OP_READ
+            debug("need unwrap in ssl handshake for %s".format(underlying.socket.getRemoteSocketAddress))
+            if (readIfReadyAndNeeded(true)) {
+              debug("select to read more for %s".format(underlying.socket.getRemoteSocketAddress))
+              return SelectionKey.OP_READ
+            }
           case HandshakeStatus.NEED_WRAP =>
             // Generate handshaking data
-            wrap(emptyBuffer)
-            // Prepare to write handshake data
-            return SelectionKey.OP_WRITE
+            debug("need wrap in ssl handshake for %s".format(underlying.socket.getRemoteSocketAddress))
+            if (myNetData.remaining == 0) {
+              wrap(emptyBuffer)
+            }
+            // Write handshake data if socket is ready or go back to select loop to write more later
+            if (writeIfReadyAndNeeded(true)) {
+              debug("select to write more for %s".format(underlying.socket.getRemoteSocketAddress))
+              return SelectionKey.OP_WRITE
+            }
           case HandshakeStatus.NEED_TASK =>
             handshakeStatus = runTasks()
           case HandshakeStatus.FINISHED =>
+            info("finished ssl handshake for %s".format(underlying.socket.getRemoteSocketAddress))
             return 0
+          case null =>
+            return SSLSocketChannel.runningTasks
         }
       }
       o
@@ -313,25 +426,17 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
     this.synchronized {
       if (initialized == 0) return initialized
 
-      // Receive handshaking data from peer
+      if (selectionKey == null) selectionKey = key
+      
       if (initialized != -1) {
-        if ((o & SelectionKey.OP_READ) != 0) {
-          if (readRaw() < 0) {
-            shutdown = true
-            // Handle closed channel
-            underlying.close()
-            return initialized
-          }
-          // Process incoming handshaking data
-          unwrap()
-        }
-        // Send handshake data to peer
-        if ((o & SelectionKey.OP_WRITE) != 0) {
-          writeRaw(myNetData)
-        }
+        // Send handshake data in buffer to peer and return if data not fully written
+        if (writeIfReadyAndNeeded(false)) return o
       }
-      initialized = localHandshake()
-      initialized
+      val init  = localHandshake()
+      if (init != SSLSocketChannel.runningTasks) {
+        initialized = init
+      }
+      init
     }
   }
 
@@ -367,7 +472,12 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
       
       // Send close message to peer
       myNetData.flip()
-      writeRaw(myNetData)
+      try {
+        while (myNetData.hasRemaining)
+          writeRaw(myNetData)
+      } catch {
+        case ie: IOException => // Ignore write errors on shutdown
+      }
     }
   }
   
@@ -380,7 +490,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   private def handshakeInBlockMode(ops: Int) = {
     var o = ops
     while (o != 0) {
-  	  val tops = handshake(o)
+  	  val tops = handshake(o, null)
       if (tops == o) {
           try { 
             Thread.sleep(10)
@@ -426,6 +536,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   private[this] def unwrap(): Int = {
     val pos = peerAppData.position
     peerNetData.flip()
+    trace("unwrap: flipped peerNetData %s for %s".format(peerNetData, underlying.socket.getRemoteSocketAddress))
     try {
       while (peerNetData.hasRemaining) {
         val result = sslEngine.unwrap(peerNetData, peerAppData)
@@ -435,6 +546,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
             // Continue to read more until done
             if (handshakeStatus == HandshakeStatus.NEED_TASK) {
               handshakeStatus = runTasks()
+              if (handshakeStatus == null) return 0
             }
           case SSLEngineResult.Status.BUFFER_OVERFLOW =>
             // Maybe need to enlarge the peer application data buffer or compact it.
@@ -446,9 +558,11 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
           case SSLEngineResult.Status.CLOSED =>
             // If there is unread data simply mark the connection shutdown, let it close after all data is read
             if (peerAppData.position == 0) {
+              trace("uwrap: shutdown for %s".format(peerAppData, underlying.socket.getRemoteSocketAddress))
               shutdown()
               return -1
             } else {
+              trace("uwrap: shutdown with non-empty peerAppData %s for %s".format(peerAppData, underlying.socket.getRemoteSocketAddress))
               shutdown = true
               return 0
             }
@@ -459,6 +573,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
       }
     } finally {
       peerNetData.compact()
+      trace("unwrap: compacted peerNetData %s for %s".format(peerNetData, underlying.socket.getRemoteSocketAddress))
     }
     peerAppData.position - pos
   }
@@ -473,6 +588,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   private[this] def wrap(src: ByteBuffer): Int = {
     val written = src.remaining
     myNetData.compact()
+    trace("wrap: compacted myNetData %s for %s".format(myNetData, underlying.socket.getRemoteSocketAddress))
     try {
       do {
         // Generate SSL/TLS encoded data (handshake or application data)
@@ -483,6 +599,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
             // Nothing to do, src whould not have any data remaining
             if (handshakeStatus == HandshakeStatus.NEED_TASK) {
               handshakeStatus = runTasks()
+              if (handshakeStatus == null) return 0
             }
           case SSLEngineResult.Status.BUFFER_OVERFLOW =>
             // Expand myNetData
@@ -499,6 +616,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
       } while (src.hasRemaining())
     } finally {
       myNetData.flip()
+      trace("wrap: flipped myNetData %s for %s".format(myNetData, underlying.socket.getRemoteSocketAddress))
     }
     written
   }
@@ -511,9 +629,27 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
    * @throws IOException on I/O errors.
    */
   private[this] def writeRaw(out: ByteBuffer):Long = {
+    /**
+     * Simulate slow network by writing two bytes at a time
+     */
+    def writeTwo(i: ByteBuffer): ByteBuffer = {
+      //if (blocking) return i
+      val o = ByteBuffer.allocate(2)
+      var rem = i.limit - i.position
+      if (rem > o.capacity) rem = o.capacity
+      var c = 0
+      while (c < rem) {
+        o.put(i.get)
+        c += 1
+      }
+      o.flip()
+      o
+    }
     try {
         // Flush only if bytes available.
-        if (out.hasRemaining) underlying.write(out) else 0
+        if (out.hasRemaining) {
+          underlying.write(if (SSLSocketChannel.simulateSlowNetwork) writeTwo(out) else out)
+        } else 0
     } catch {
       case x: IOException =>
         // Can't write more bytes...
@@ -524,20 +660,27 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   }
   
   /**
-   * Runs delegated handshaking tasks synchronously.
-   * (Might get to do asynchronously in future for non-blocking case but
-   * it is looking really hairy)
+   * Runs delegated handshaking tasks synchronously for blocking and
+   * asynchronously for non-blocking
    * 
-   * @return the handshake status.
+   * @return the handshake status or null
    */
   private[this] def runTasks(): HandshakeStatus = {
     var runnable: Runnable = sslEngine.getDelegatedTask
-    while (runnable != null) {
-      //if (blocking) runnable.run() else executor.execute(runnable)
-      runnable.run()
-      runnable = sslEngine.getDelegatedTask
+    if (!blocking && selectionKey != null) {
+      debug("runTasks asynchronously in ssl handshake for %s".format(underlying.socket.getRemoteSocketAddress))
+      if (runnable != null) {
+        executor.execute(new SSLTasker(runnable))
+      }
+      null
+    } else {
+      debug("runTasks synchronously in ssl handshake for %s".format(underlying.socket.getRemoteSocketAddress))
+      while (runnable != null) {
+        runnable.run()
+        runnable = sslEngine.getDelegatedTask
+      }
+      sslEngine.getHandshakeStatus
     }
-    sslEngine.getHandshakeStatus
   }
 
   /**
