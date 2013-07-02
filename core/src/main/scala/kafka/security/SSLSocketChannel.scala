@@ -41,7 +41,8 @@ object SSLSocketChannel {
    */
   def makeSecureClientConnection(sch: SocketChannel, host: String, port: Int) = {
     // Pass host and port and try to use SSL session reuse as much as possible
-    val engine = SSLContext.getDefault.createSSLEngine(host, port)
+    val engine = SSLContext.getDefault.createSSLEngine()
+    engine.setEnabledProtocols(Array("SSLv3"));
     engine.setUseClientMode(true)
     new SSLSocketChannel(sch, engine)
   }
@@ -64,6 +65,7 @@ object SSLSocketChannel {
       case _ =>
         SSLContext.getDefault.createSSLEngine()
     }
+    engine.setEnabledProtocols(Array("SSLv3"));
     engine.setUseClientMode(false)
     if (wantClientAuth) {
       engine.setWantClientAuth(true)
