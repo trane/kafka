@@ -20,8 +20,9 @@ package kafka.security
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.SSLContext
+import kafka.utils.Logging
 
-object Authentication {
+object Authentication extends Logging {
 
   private var initialized = false
   
@@ -29,6 +30,7 @@ object Authentication {
     // If secure setup SSLContext
     synchronized {
         if (initialized) return
+        info("Initializing Authentication")
         initialized = true
 	    val tms = config.truststorePwd match {
 	      case pw: String =>
