@@ -42,6 +42,7 @@ object SSLSocketChannel {
   def makeSecureClientConnection(sch: SocketChannel, host: String, port: Int) = {
     // Pass host and port and try to use SSL session reuse as much as possible
     val engine = SSLContext.getDefault.createSSLEngine(host, port)
+    engine.setEnabledProtocols(Array("SSLv3"))
     engine.setUseClientMode(true)
     new SSLSocketChannel(sch, engine)
   }
@@ -64,6 +65,7 @@ object SSLSocketChannel {
       case _ =>
         SSLContext.getDefault.createSSLEngine()
     }
+    engine.setEnabledProtocols(Array("SSLv3"))
     engine.setUseClientMode(false)
     if (wantClientAuth) {
       engine.setWantClientAuth(true)
@@ -665,7 +667,11 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
    * 
    * @return the handshake status or null
    */
-  private[this] def runTasks(): HandshakeStatus = {
+  private[this] def runTasks(ops: Int = SelectionKey.OP_READ): HandshakeStatus = {
+    if (initialized == 0) {
+      initialized = ops
+      info("runTasks running renegotiation for %s".format(underlying.socket.getRemoteSocketAddress))
+    }
     var runnable: Runnable = sslEngine.getDelegatedTask
     if (!blocking && selectionKey != null) {
       debug("runTasks asynchronously in ssl handshake for %s".format(underlying.socket.getRemoteSocketAddress))

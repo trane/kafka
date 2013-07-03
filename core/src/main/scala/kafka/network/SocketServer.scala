@@ -64,7 +64,7 @@ class SocketServer(val brokerId: Int,
     requestChannel.addResponseListener((id:Int) => processors(id).wakeup())
    
     // start accepting connections
-    this.acceptor = new Acceptor(host, port, secure, processors, sendBufferSize, recvBufferSize)
+    this.acceptor = new Acceptor(host, port, secure, securityConfig, processors, sendBufferSize, recvBufferSize)
     Utils.newThread("kafka-acceptor", acceptor, false).start()
     acceptor.awaitStartup
     info("Started")
@@ -135,8 +135,8 @@ private[kafka] abstract class AbstractServerThread extends Runnable with Logging
 /**
  * Thread that accepts and configures new connections. There is only need for one of these
  */
-private[kafka] class Acceptor(val host: String, val port: Int, val secure: Boolean, private val processors: Array[Processor],
-                              val sendBufferSize: Int, val recvBufferSize: Int) extends AbstractServerThread {
+private[kafka] class Acceptor(val host: String, val port: Int, val secure: Boolean, val securityConfig: SecurityConfig,
+                              private val processors: Array[Processor], val sendBufferSize: Int, val recvBufferSize: Int) extends AbstractServerThread {
   val serverChannel = openServerSocket(host, port)
 
   /**
@@ -204,7 +204,7 @@ private[kafka] class Acceptor(val host: String, val port: Int, val secure: Boole
     serverSocketChannel.socket().setReceiveBufferSize(recvBufferSize)
 
     val sch = serverSocketChannel.accept()
-    val socketChannel = if (secure) SSLSocketChannel.makeSecureServerConnection(sch) else sch
+    val socketChannel = if (secure) SSLSocketChannel.makeSecureServerConnection(sch, securityConfig.wantClientAuth, securityConfig.needClientAuth) else sch
     socketChannel.configureBlocking(false)
     socketChannel.socket().setTcpNoDelay(true)
     socketChannel.socket().setSendBufferSize(sendBufferSize)
@@ -378,8 +378,10 @@ private[kafka] class Processor(val id: Int,
     } else {
       // more reading to be done
       trace("Did not finish reading, registering for read again on connection " + socketChannel.socket.getRemoteSocketAddress())
-      key.interestOps(SelectionKey.OP_READ)
-      wakeup()
+      val ops = key.interestOps
+      key.interestOps(ops)
+      // If we were reading and still is reading we should wakeup immediately and read some more
+      if (ops == SelectionKey.OP_READ) wakeup()
     }
   }
 
@@ -404,8 +406,10 @@ private[kafka] class Processor(val id: Int,
       readBufferedSSLDataIfNeeded(key, channelTuple)
     } else {
       trace("Did not finish writing, registering for write again on connection " + socketChannel.socket.getRemoteSocketAddress())
-      key.interestOps(SelectionKey.OP_WRITE)
-      wakeup()
+      val ops = key.interestOps
+      key.interestOps(ops)
+      // If we were writing and still is writing we should wakeup immediately and write some more
+      if (ops == SelectionKey.OP_WRITE) wakeup()
     }
   }
 
