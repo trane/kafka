@@ -418,21 +418,26 @@ private[kafka] class Processor(val id: Int,
     if (secure) {
       val secureSocketChannel = key.attachment.asInstanceOf[ChannelTuple].sslChannel
       if (ops >= 0 && !secureSocketChannel.finished()) {
+        var done = false
         try {
           val next = secureSocketChannel.handshake(key.interestOps(), key)
           if (next == 0) {
-            // when handshake is complete go back to read mode
-            key.interestOps(SelectionKey.OP_READ)
+            // when handshake is complete and we are doing a read so ahead with the read
+            // otherwise go back to read mode
+            if (ops == SelectionKey.OP_READ) {
+              done = true
+            } else {
+              key.interestOps(SelectionKey.OP_READ)
+            }
           } else if (next != SSLSocketChannel.runningTasks) {
             key.interestOps(next)
           }
-          null
         } catch {
           case e: SSLException => // just ignore SSL disconnect errors
             debug("SSLException: " + e)
             close(key)
-            null
         }
+        if (done) secureSocketChannel else null
       } else secureSocketChannel
     } else sch
   }
