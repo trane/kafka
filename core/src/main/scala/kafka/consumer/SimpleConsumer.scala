@@ -21,6 +21,8 @@ import kafka.api._
 import kafka.network._
 import kafka.utils._
 import kafka.common.{ErrorMapping, TopicAndPartition}
+import kafka.security.Authentication
+import kafka.security.SecurityConfig
 
 /**
  * A consumer of kafka messages
@@ -31,9 +33,24 @@ class SimpleConsumer(val host: String,
                      val soTimeout: Int,
                      val bufferSize: Int,
                      val clientId: String,
-                     val secure: Boolean = false) extends Logging {
+                     val secure: Boolean = false,
+                     val securityConfigFile: String = null) extends Logging {
 
   ConsumerConfig.validateClientId(clientId)
+  
+  if (secure){
+    
+    synchronized{
+      if (!Authentication.isInitialized){
+        if (securityConfigFile != null){
+    	  Authentication.initialize(new SecurityConfig(securityConfigFile))
+        }else{
+    	  logger.error("securityConfigFile should not be null, if secure is true")
+        }
+      }
+    }
+    
+  }
   private val lock = new Object()
   private val blockingChannel = new BlockingChannel(host, port, secure, bufferSize, BlockingChannel.UseDefaultBufferSize, soTimeout)
   val brokerInfo = "host_%s-port_%s".format(host, port)

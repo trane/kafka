@@ -167,15 +167,16 @@ object SimpleConsumerShell extends Logging {
       }
     }
     fetchTargetBroker = replicaOpt.get
-
+    
     // initializing starting offset
     if(startingOffset < OffsetRequest.EarliestTime) {
       System.err.println("Invalid starting offset: %d".format(startingOffset))
       System.exit(1)
     }
     if (startingOffset < 0) {
+      
       val simpleConsumer = new SimpleConsumer(fetchTargetBroker.host, fetchTargetBroker.port, ConsumerConfig.SocketTimeout,
-                                              ConsumerConfig.SocketBufferSize, clientId)
+                                              ConsumerConfig.SocketBufferSize, clientId, fetchTargetBroker.secure, securityConfigFile)
       try {
         startingOffset = simpleConsumer.earliestOrLatestOffset(TopicAndPartition(topic, partitionId), startingOffset,
                                                                Request.DebuggingConsumerId)
@@ -194,9 +195,9 @@ object SimpleConsumerShell extends Logging {
     formatter.init(formatterArgs)
 
     val replicaString = if(replicaId > 0) "leader" else "replica"
-    info("Starting simple consumer shell to partition [%s, %d], %s [%d], host and port: [%s, %d], from offset [%d]"
-                 .format(topic, partitionId, replicaString, replicaId, fetchTargetBroker.host, fetchTargetBroker.port, startingOffset))
-    val simpleConsumer = new SimpleConsumer(fetchTargetBroker.host, fetchTargetBroker.port, 10000, 64*1024, clientId)
+    info("Starting simple consumer shell to partition [%s, %d], %s [%d], host and port: [%s, %d], secure: [%s] , from offset [%d]"
+                 .format(topic, partitionId, replicaString, replicaId, fetchTargetBroker.host, fetchTargetBroker.port, fetchTargetBroker.secure, startingOffset))
+    val simpleConsumer = new SimpleConsumer(fetchTargetBroker.host, fetchTargetBroker.port, 10000, 64*1024, clientId, fetchTargetBroker.secure, securityConfigFile)
     val thread = Utils.newThread("kafka-simpleconsumer-shell", new Runnable() {
       def run() {
         var offset = startingOffset

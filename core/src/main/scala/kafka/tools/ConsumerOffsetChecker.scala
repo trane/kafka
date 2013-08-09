@@ -25,16 +25,14 @@ import kafka.consumer.SimpleConsumer
 import kafka.api.{PartitionOffsetRequestInfo, OffsetRequest}
 import kafka.common.{BrokerNotAvailableException, TopicAndPartition}
 import scala.collection._
-import kafka.security.SecurityConfig
-import kafka.security.Authentication
 
 object ConsumerOffsetChecker extends Logging {
 
   private val consumerMap: mutable.Map[Int, Option[SimpleConsumer]] = mutable.Map()
 
-  private def getConsumer(zkClient: ZkClient, bid: Int): Option[SimpleConsumer] = {
+  private def getConsumer(zkClient: ZkClient, bid: Int, securityConfigFile : String): Option[SimpleConsumer] = {
     try {
-      Authentication.initialize(new SecurityConfig("/home/relango/dev/sandbox/relango/kafkadev/kafka/config/client.security.properties")) 
+       
       ZkUtils.readDataMaybeNull(zkClient, ZkUtils.BrokerIdsPath + "/" + bid)._1 match {
         case Some(brokerInfoString) =>
           Json.parseFull(brokerInfoString) match {
@@ -42,7 +40,8 @@ object ConsumerOffsetChecker extends Logging {
               val brokerInfo = m.asInstanceOf[Map[String, Any]]
               val host = brokerInfo.get("host").get.asInstanceOf[String]
               val port = brokerInfo.get("port").get.asInstanceOf[Int]
-              Some(new SimpleConsumer(host, port, 10000, 100000, "ConsumerOffsetChecker", true))
+              val secure = brokerInfo.get("secure").get.asInstanceOf[Boolean]
+              Some(new SimpleConsumer(host, port, 10000, 100000, "ConsumerOffsetChecker", secure, securityConfigFile))
             case None =>
               throw new BrokerNotAvailableException("Broker id %d does not exist".format(bid))
           }
@@ -57,7 +56,7 @@ object ConsumerOffsetChecker extends Logging {
   }
 
   private def processPartition(zkClient: ZkClient,
-                               group: String, topic: String, pid: Int) {
+                               group: String, topic: String, pid: Int, securityConfigFile : String) {
     val offset = ZkUtils.readData(zkClient, "/consumers/%s/offsets/%s/%s".
             format(group, topic, pid))._1.toLong
     val owner = ZkUtils.readDataMaybeNull(zkClient, "/consumers/%s/owners/%s/%s".
@@ -65,7 +64,7 @@ object ConsumerOffsetChecker extends Logging {
 
     ZkUtils.getLeaderForPartition(zkClient, topic, pid) match {
       case Some(bid) =>
-        val consumerOpt = consumerMap.getOrElseUpdate(bid, getConsumer(zkClient, bid))
+        val consumerOpt = consumerMap.getOrElseUpdate(bid, getConsumer(zkClient, bid, securityConfigFile))
         consumerOpt match {
           case Some(consumer) =>
             val topicAndPartition = TopicAndPartition(topic, pid)
@@ -84,12 +83,12 @@ object ConsumerOffsetChecker extends Logging {
     }
   }
 
-  private def processTopic(zkClient: ZkClient, group: String, topic: String) {
+  private def processTopic(zkClient: ZkClient, group: String, topic: String, securityConfigFile : String) {
     val pidMap = ZkUtils.getPartitionsForTopics(zkClient, Seq(topic))
     pidMap.get(topic) match {
       case Some(pids) =>
         pids.sorted.foreach {
-          pid => processPartition(zkClient, group, topic, pid)
+          pid => processPartition(zkClient, group, topic, pid, securityConfigFile)
         }
       case None => // ignore
     }
@@ -117,12 +116,21 @@ object ConsumerOffsetChecker extends Logging {
             withRequiredArg().ofType(classOf[String])
     parser.accepts("broker-info", "Print broker info")
     parser.accepts("help", "Print this message.")
+    val securityConfigFileOpt = parser.accepts("security.config.file", "Security config file to use for SSL.")
+                                  .withRequiredArg
+                                  .describedAs("property file")
+                                  .ofType(classOf[java.lang.String])
 
     val options = parser.parse(args : _*)
+    var securityConfigFile:String = null;
 
     if (options.has("help")) {
        parser.printHelpOn(System.out)
        System.exit(0)
+    }
+    
+    if (options.has(securityConfigFileOpt)){
+       securityConfigFile = options.valueOf(securityConfigFileOpt);
     }
 
     for (opt <- List(groupOpt))
@@ -153,7 +161,7 @@ object ConsumerOffsetChecker extends Logging {
 
       println("%-15s %-30s %-3s %-15s %-15s %-15s %s".format("Group", "Topic", "Pid", "Offset", "logSize", "Lag", "Owner"))
       topicList.sorted.foreach {
-        topic => processTopic(zkClient, group, topic)
+        topic => processTopic(zkClient, group, topic, securityConfigFile)
       }
 
       if (options.has("broker-info"))

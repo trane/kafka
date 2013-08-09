@@ -26,6 +26,8 @@ object Authentication extends Logging {
 
   private var initialized = false
   
+  def isInitialized = initialized;
+  
   def initialize(config: SecurityConfig) {
     // If secure setup SSLContext
     synchronized {

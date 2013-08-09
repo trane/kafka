@@ -29,9 +29,9 @@ object GetOffsetShell {
 
   def main(args: Array[String]): Unit = {
     val parser = new OptionParser
-    val urlOpt = parser.accepts("server", "REQUIRED: The hostname of the server to connect to.")
+    val brokerOpt = parser.accepts("broker", "REQUIRED: The hostname of the broker to connect to.")
                            .withRequiredArg
-                           .describedAs("kafka://hostname:port")
+                           .describedAs("hostname:port")
                            .ofType(classOf[String])
     val topicOpt = parser.accepts("topic", "REQUIRED: The topic to get offset from.")
                            .withRequiredArg
@@ -51,10 +51,14 @@ object GetOffsetShell {
                            .describedAs("count")
                            .ofType(classOf[java.lang.Integer])
                            .defaultsTo(1)
+    val securityConfigFileOpt = parser.accepts("security.config.file", "Security config file to use for SSL.")
+                                  .withRequiredArg
+                                  .describedAs("property file")
+                                  .ofType(classOf[java.lang.String])
 
     val options = parser.parse(args : _*)
 
-    for(arg <- List(urlOpt, topicOpt, timeOpt)) {
+    for(arg <- List(brokerOpt, topicOpt, timeOpt)) {
       if(!options.has(arg)) {
         System.err.println("Missing required argument \"" + arg + "\"")
         parser.printHelpOn(System.err)
@@ -62,12 +66,16 @@ object GetOffsetShell {
       }
     }
 
-    val url = new URI(options.valueOf(urlOpt))
+    val brokerInfos = options.valueOf(brokerOpt).split(":")
+    val hostName = brokerInfos(0)
+    val port = brokerInfos(1).toInt
+    val secure = if (brokerInfos.length > 2) brokerInfos(2).toBoolean else false
+      
     val topic = options.valueOf(topicOpt)
     val partition = options.valueOf(partitionOpt).intValue
     var time = options.valueOf(timeOpt).longValue
     val nOffsets = options.valueOf(nOffsetsOpt).intValue
-    val consumer = new SimpleConsumer(url.getHost, url.getPort, 10000, 100000, "GetOffsetShell")
+    val consumer = new SimpleConsumer(hostName, port, 10000, 100000, "GetOffsetShell", secure, options.valueOf(securityConfigFileOpt))
     val topicAndPartition = TopicAndPartition(topic, partition)
     val request = OffsetRequest(Map(topicAndPartition -> PartitionOffsetRequestInfo(time, nOffsets)))
     val offsets = consumer.getOffsetsBefore(request).partitionErrorAndOffsets(topicAndPartition).offsets
