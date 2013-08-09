@@ -25,7 +25,8 @@ import kafka.consumer.SimpleConsumer
 import kafka.api.{PartitionOffsetRequestInfo, OffsetRequest}
 import kafka.common.{BrokerNotAvailableException, TopicAndPartition}
 import scala.collection._
-
+import kafka.security.SecurityConfig
+import kafka.security.Authentication
 
 object ConsumerOffsetChecker extends Logging {
 
@@ -33,6 +34,7 @@ object ConsumerOffsetChecker extends Logging {
 
   private def getConsumer(zkClient: ZkClient, bid: Int): Option[SimpleConsumer] = {
     try {
+      Authentication.initialize(new SecurityConfig("/home/relango/dev/sandbox/relango/kafkadev/kafka/config/client.security.properties")) 
       ZkUtils.readDataMaybeNull(zkClient, ZkUtils.BrokerIdsPath + "/" + bid)._1 match {
         case Some(brokerInfoString) =>
           Json.parseFull(brokerInfoString) match {
@@ -40,7 +42,7 @@ object ConsumerOffsetChecker extends Logging {
               val brokerInfo = m.asInstanceOf[Map[String, Any]]
               val host = brokerInfo.get("host").get.asInstanceOf[String]
               val port = brokerInfo.get("port").get.asInstanceOf[Int]
-              Some(new SimpleConsumer(host, port, 10000, 100000, "ConsumerOffsetChecker"))
+              Some(new SimpleConsumer(host, port, 10000, 100000, "ConsumerOffsetChecker", true))
             case None =>
               throw new BrokerNotAvailableException("Broker id %d does not exist".format(bid))
           }
