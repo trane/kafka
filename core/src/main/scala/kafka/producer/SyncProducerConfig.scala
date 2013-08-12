@@ -39,11 +39,7 @@ class SyncProducerConfig private (val props: VerifiableProperties) extends SyncP
   /** security config */
   val securityConfig = if (secure) {
     info("Secure sockets for data transfer is enabled");
-    
-    if (!props.containsKey("security.config.file")){
-      warn("security.config.file is not defined, using default " + SecurityConfig.DEFAULT_SECURITY_CONFIG );
-    }
-    new SecurityConfig(props.getString("security.config.file", SecurityConfig.DEFAULT_SECURITY_CONFIG))
+    new SecurityConfig(props.getString("security.config.file", null))
   }
   else 
     null

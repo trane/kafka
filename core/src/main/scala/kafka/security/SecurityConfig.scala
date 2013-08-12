@@ -2,14 +2,21 @@ package kafka.security
 
 import kafka.utils.VerifiableProperties
 import kafka.utils.Utils
+import kafka.utils.Logging
 
 object SecurityConfig{
   val DEFAULT_SECURITY_CONFIG = "config/client.security.properties"
 }
 
-class SecurityConfig(propFile: String) {
+class SecurityConfig(var securityConfigFile: String) extends Logging {
   
-  val props = new VerifiableProperties(Utils.loadProps(propFile))
+  val props = {
+    if (securityConfigFile == null){
+      warn("securityConfigFile is null, using default securityConfigFile " + SecurityConfig.DEFAULT_SECURITY_CONFIG );
+      securityConfigFile = SecurityConfig.DEFAULT_SECURITY_CONFIG;
+    }
+    new VerifiableProperties(Utils.loadProps(securityConfigFile))
+  }
   
   /** Request client auth */
   val wantClientAuth = props.getBoolean("want.client.auth", false)

@@ -42,13 +42,7 @@ class SimpleConsumer(val host: String,
     
     synchronized{
       if (!Authentication.isInitialized){
-        
-        if (securityConfigFile == null){
-          warn("security.config.file is not defined, using default " + SecurityConfig.DEFAULT_SECURITY_CONFIG);
-          securityConfigFile = SecurityConfig.DEFAULT_SECURITY_CONFIG;
-        }
         Authentication.initialize(new SecurityConfig(securityConfigFile))
-        
       }
     }
     
