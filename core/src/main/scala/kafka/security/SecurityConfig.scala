@@ -3,6 +3,10 @@ package kafka.security
 import kafka.utils.VerifiableProperties
 import kafka.utils.Utils
 
+object SecurityConfig{
+  val DEFAULT_SECURITY_CONFIG = "config/client.security.properties"
+}
+
 class SecurityConfig(propFile: String) {
   
   val props = new VerifiableProperties(Utils.loadProps(propFile))

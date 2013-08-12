@@ -34,7 +34,7 @@ class SimpleConsumer(val host: String,
                      val bufferSize: Int,
                      val clientId: String,
                      val secure: Boolean = false,
-                     val securityConfigFile: String = null) extends Logging {
+                     var securityConfigFile: String = null) extends Logging {
 
   ConsumerConfig.validateClientId(clientId)
   
@@ -42,11 +42,13 @@ class SimpleConsumer(val host: String,
     
     synchronized{
       if (!Authentication.isInitialized){
-        if (securityConfigFile != null){
-          Authentication.initialize(new SecurityConfig(securityConfigFile))
-        }else{
-          logger.error("securityConfigFile should not be null, if secure is true")
+        
+        if (securityConfigFile == null){
+          warn("security.config.file is not defined, using default " + SecurityConfig.DEFAULT_SECURITY_CONFIG);
+          securityConfigFile = SecurityConfig.DEFAULT_SECURITY_CONFIG;
         }
+        Authentication.initialize(new SecurityConfig(securityConfigFile))
+        
       }
     }
     
