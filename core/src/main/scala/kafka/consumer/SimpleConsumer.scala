@@ -43,9 +43,9 @@ class SimpleConsumer(val host: String,
     synchronized{
       if (!Authentication.isInitialized){
         if (securityConfigFile != null){
-    	  Authentication.initialize(new SecurityConfig(securityConfigFile))
+          Authentication.initialize(new SecurityConfig(securityConfigFile))
         }else{
-    	  logger.error("securityConfigFile should not be null, if secure is true")
+          logger.error("securityConfigFile should not be null, if secure is true")
         }
       }
     }
