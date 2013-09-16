@@ -75,6 +75,7 @@ class BlockingChannel( val host: String,
   
   def disconnect() = lock synchronized {
     if(connected && channel != null) {
+      debug("Disconnecting channel " + channel.socket.getRemoteSocketAddress());
       // closing the main socket channel *should* close the read channel
       // but let's do it to be sure.
       swallow(channel.close())

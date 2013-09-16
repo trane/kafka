@@ -21,6 +21,7 @@ import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.SSLContext
 import kafka.utils.Logging
+import java.io.FileInputStream;
 
 object Authentication extends Logging {
 
@@ -37,7 +38,9 @@ object Authentication extends Logging {
 	    val tms = config.truststorePwd match {
 	      case pw: String =>
 		    val ts = java.security.KeyStore.getInstance("JKS")
-		    ts.load(new java.io.FileInputStream(config.truststore), pw.toCharArray)
+		    val fis: FileInputStream = new FileInputStream(config.truststore);
+		    ts.load(fis, pw.toCharArray)
+		    fis.close();
 		    val tmf = TrustManagerFactory.getInstance("SunX509")
 		    tmf.init(ts)
 		    tmf.getTrustManagers
@@ -46,7 +49,9 @@ object Authentication extends Logging {
 	    val kms = config.keystorePwd match {
 	      case pw: String =>
 			val ks = java.security.KeyStore.getInstance("JKS")
-			ks.load(new java.io.FileInputStream(config.keystore), pw.toCharArray)
+			val fis: FileInputStream = new FileInputStream(config.keystore);
+			ks.load(fis, pw.toCharArray)
+			fis.close();
 			val kmf = KeyManagerFactory.getInstance("SunX509")
 			kmf.init(ks, if (config.keyPwd != null) config.keyPwd.toCharArray else pw.toCharArray)
 			kmf.getKeyManagers
