@@ -206,6 +206,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   def isConnectionPending(): Boolean = underlying.isConnectionPending
 
   def connect(remote: SocketAddress): Boolean = {
+    debug("SSLSocketChannel Connecting to Remote : " + remote);
     val ret = underlying.connect(remote)
     if (blocking) {
       while (!finishConnect()) {
@@ -450,6 +451,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
    * 
    */
   def shutdown() {
+    debug("SSLSocketChannel shutting down with locking");
     this.synchronized(_shutdown())
     
     // Close transport
@@ -462,6 +464,7 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
    * 
    */
   private def _shutdown() {
+    debug("SSLSocketChannel shutting down with out locking");
     shutdown = true
     
     // Indicate that application is done with engine

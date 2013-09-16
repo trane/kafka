@@ -163,6 +163,7 @@ object Utils extends Logging {
     val propStream = new FileInputStream(filename)
     val props = new Properties()
     props.load(propStream)
+    propStream.close();
     props
   }
 
