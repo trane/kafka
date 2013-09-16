@@ -464,29 +464,36 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
   private def _shutdown() {
     shutdown = true
     
-    // Indicate that application is done with engine
-    if (!sslEngine.isOutboundDone) sslEngine.closeOutbound()
-
-    myNetData.compact()
-    while (!sslEngine.isOutboundDone()) {
-      // Get close message and check res statuses
-      val res = sslEngine.wrap(emptyBuffer, myNetData)
-      if (res.getStatus != Status.CLOSED) {
-        throw new SSLException("Unexpected shutdown status '" + res.getStatus + '\'')
+    try {
+      // Indicate that application is done with engine
+      if (!sslEngine.isOutboundDone) sslEngine.closeOutbound()
+  
+      myNetData.compact()
+      while (!sslEngine.isOutboundDone()) {
+        // Get close message and check res statuses
+        val res = sslEngine.wrap(emptyBuffer, myNetData)
+        if (res.getStatus != Status.CLOSED) {
+          throw new SSLException("Unexpected shutdown status '" + res.getStatus + '\'')
+        }
+        
+        // Send close message to peer
+        myNetData.flip()
+        try {
+          while (myNetData.hasRemaining)
+            writeRaw(myNetData)
+        } catch {
+          case ie: IOException => // Ignore write errors on shutdown
+        }
       }
-      
-      // Send close message to peer
-      myNetData.flip()
-      try {
-        while (myNetData.hasRemaining)
-          writeRaw(myNetData)
-      } catch {
-        case ie: IOException => // Ignore write errors on shutdown
-      }
-      
+    } finally {
       // Close selector if needed
       if (blockingKey != null) {
-        blockingKey.cancel()
+        try {
+          blockingKey.cancel()
+        } finally {
+          blockingKey = null
+          blockingSelector.close()
+        }
       }
     }
   }

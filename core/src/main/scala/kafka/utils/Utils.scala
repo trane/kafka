@@ -162,7 +162,11 @@ object Utils extends Logging {
   def loadProps(filename: String): Properties = {
     val propStream = new FileInputStream(filename)
     val props = new Properties()
-    props.load(propStream)
+    try {
+      props.load(propStream)
+    } finally {
+      propStream.close()
+    }
     props
   }
 
