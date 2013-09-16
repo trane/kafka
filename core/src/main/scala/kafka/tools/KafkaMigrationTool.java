@@ -384,13 +384,17 @@ public class KafkaMigrationTool {
     public void run() {
       try{
         while(true) {
-          KeyedMessage<byte[], byte[]> data = producerDataChannel.receiveRequest();
-          if(!data.equals(shutdownMessage)) {
-            producer.send(data);
-            if(logger.isDebugEnabled()) logger.debug("Sending message %s".format(new String(data.message())));
+          try {
+            KeyedMessage<byte[], byte[]> data = producerDataChannel.receiveRequest();
+            if(!data.equals(shutdownMessage)) {
+              producer.send(data);
+              if(logger.isDebugEnabled()) logger.debug("Sending message %s".format(new String(data.message())));
+            }
+            else
+              break;
+          } catch (Throwable t) {
+            logger.fatal("Producer thread ignoring failure due to ", t);
           }
-          else
-            break;
         }
         logger.info("Producer thread " + threadName + " finished running");
       } catch (Throwable t){
