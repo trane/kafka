@@ -393,7 +393,7 @@ public class KafkaMigrationTool {
             else
               break;
           } catch (Throwable t) {
-            logger.fatal("Producer thread ignoring failure due to ", t);
+            logger.warn("Producer thread ignoring failure due to ", t);
           }
         }
         logger.info("Producer thread " + threadName + " finished running");
