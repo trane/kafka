@@ -282,7 +282,12 @@ class ReplicaManager(val config: KafkaConfig,
   private def maybeShrinkIsr(): Unit = {
     trace("Evaluating ISR list of partitions to see which replicas can be removed from the ISR")
     leaderPartitionsLock synchronized {
-      leaderPartitions.foreach(partition => partition.maybeShrinkIsr(config.replicaLagTimeMaxMs, config.replicaLagMaxMessages))
+      leaderPartitions.foreach { partition =>
+        if (!partition.maybeShrinkIsr(config.replicaLagTimeMaxMs, config.replicaLagMaxMessages)) {
+          // Not leader anymore reset self
+          stopReplica(partition.topic, partition.partitionId, true)
+        }
+      }
     }
   }
 

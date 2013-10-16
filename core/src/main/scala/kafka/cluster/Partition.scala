@@ -277,7 +277,7 @@ class Partition(val topic: String,
         .format(topic, partitionId, oldHighWatermark, newHighWatermark, allLogEndOffsets.mkString(",")))
   }
 
-  def maybeShrinkIsr(replicaMaxLagTimeMs: Long,  replicaMaxLagMessages: Long) {
+  def maybeShrinkIsr(replicaMaxLagTimeMs: Long,  replicaMaxLagMessages: Long): Boolean = {
     leaderIsrUpdateLock synchronized {
       leaderReplicaIfLocal() match {
         case Some(leaderReplica) =>
@@ -293,7 +293,9 @@ class Partition(val topic: String,
             maybeIncrementLeaderHW(leaderReplica)
             replicaManager.isrShrinkRate.mark()
           }
+          true
         case None => // do nothing if no longer leader
+          false
       }
     }
   }
@@ -351,6 +353,9 @@ class Partition(val topic: String,
       inSyncReplicas = newIsr
       zkVersion = newVersion
       trace("ISR updated to [%s] and zkVersion updated to [%d]".format(newIsr.mkString(","), zkVersion))
+    } else if (newVersion == ZkUtils.ReconfigureFailure){
+      info("Cached zkVersion [%d] not equal to that in zookeeper, reinitializing ISR".format(zkVersion))
+      leaderReplicaIdOpt = None
     } else {
       info("Cached zkVersion [%d] not equal to that in zookeeper, skip updating ISR".format(zkVersion))
     }

@@ -20,7 +20,7 @@ package kafka.utils
 import kafka.cluster.{Broker, Cluster}
 import kafka.consumer.TopicCount
 import org.I0Itec.zkclient.{IZkDataListener, ZkClient}
-import org.I0Itec.zkclient.exception.{ZkNodeExistsException, ZkNoNodeException, ZkMarshallingError}
+import org.I0Itec.zkclient.exception.{ZkNodeExistsException, ZkNoNodeException, ZkMarshallingError, ZkBadVersionException}
 import org.I0Itec.zkclient.serialize.ZkSerializer
 import collection._
 import kafka.api.LeaderAndIsr
@@ -43,6 +43,8 @@ object ZkUtils extends Logging {
   val ControllerEpochPath = "/controller_epoch"
   val ReassignPartitionsPath = "/admin/reassign_partitions"
   val PreferredReplicaLeaderElectionPath = "/admin/preferred_replica_election"
+  val ReattemptFailure = -1
+  val ReconfigureFailure = -2
 
   def getTopicPath(topic: String): String ={
     BrokerTopicsPath + "/" + topic
@@ -327,10 +329,14 @@ object ZkUtils extends Logging {
         .format(path, data, expectVersion, stat.getVersion))
       (true, stat.getVersion)
     } catch {
+      case bv: ZkBadVersionException =>
+        error("Conditional update of path %s with data %s and expected version %d failed due to BadVersionException %s".format(path, data,
+          expectVersion, bv.getMessage))
+        (false, ReconfigureFailure)
       case e: Exception =>
         error("Conditional update of path %s with data %s and expected version %d failed due to %s".format(path, data,
           expectVersion, e.getMessage))
-        (false, -1)
+        (false, ReattemptFailure)
     }
   }
 
