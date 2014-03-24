@@ -30,7 +30,7 @@ object KafkaBuild extends Build {
     scalacOptions ++= Seq("-deprecation", "-unchecked", "-g:none"),
     crossScalaVersions := Seq("2.8.0","2.8.2", "2.9.1", "2.9.2"),
     scalaVersion := "2.8.0",
-    version := "0.8.0-sfdc-0.7-SNAPSHOT",
+    version := "0.8.0-sfdc-0.8-SNAPSHOT",
     buildNumber := System.getProperty("build.number", ""),
     version <<= (buildNumber, version)  { (build, version)  => if (build == "") version else version + "+" + build},
     releaseName <<= (name, version, scalaVersion) {(name, version, scalaVersion) => name + "_" + scalaVersion + "-" + version},
