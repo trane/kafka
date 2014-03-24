@@ -124,6 +124,10 @@ object ConsoleConsumer extends Logging {
       .describedAs("metrics dictory")
       .ofType(classOf[java.lang.String])
 
+    val securityConfigFileOpt = parser.accepts("security.config.file", "Security config file to use for SSL.")
+                                  .withRequiredArg
+                                  .describedAs("property file")
+                                  .ofType(classOf[java.lang.String])
 
     val options: OptionSet = tryParse(parser, args)
     CommandLineUtils.checkRequiredArgs(parser, options, zkConnectOpt)
@@ -166,6 +170,9 @@ object ConsoleConsumer extends Logging {
     props.put("zookeeper.connect", options.valueOf(zkConnectOpt))
     props.put("consumer.timeout.ms", options.valueOf(consumerTimeoutMsOpt).toString)
     props.put("refresh.leader.backoff.ms", options.valueOf(refreshMetadataBackoffMsOpt).toString)
+    if (options.has(securityConfigFileOpt)){
+       props.put("security.config.file", options.valueOf(securityConfigFileOpt))
+    }
 
     val config = new ConsumerConfig(props)
     val skipMessageOnError = if (options.has(skipMessageOnErrorOpt)) true else false
@@ -184,7 +191,7 @@ object ConsoleConsumer extends Logging {
       override def run() {
         connector.shutdown()
         // if there is no group specified then avoid polluting zookeeper with persistent group data, this is a hack
-        if(!options.has(groupIdOpt))  
+        if(!options.has(groupIdOpt))
           ZkUtils.maybeDeletePath(options.valueOf(zkConnectOpt), "/consumers/" + options.valueOf(groupIdOpt))
       }
     })
@@ -277,7 +284,7 @@ class DefaultMessageFormatter extends MessageFormatter {
   var printKey = false
   var keySeparator = "\t".getBytes
   var lineSeparator = "\n".getBytes
-  
+
   override def init(props: Properties) {
     if(props.containsKey("print.key"))
       printKey = props.getProperty("print.key").trim.toLowerCase.equals("true")
@@ -286,7 +293,7 @@ class DefaultMessageFormatter extends MessageFormatter {
     if(props.containsKey("line.separator"))
       lineSeparator = props.getProperty("line.separator").getBytes
   }
-  
+
   def writeTo(key: Array[Byte], value: Array[Byte], output: PrintStream) {
     if(printKey) {
       output.write(if (key == null) "null".getBytes() else key)

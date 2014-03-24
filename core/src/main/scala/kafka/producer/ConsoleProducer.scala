@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -25,9 +25,9 @@ import kafka.common._
 import kafka.message._
 import kafka.serializer._
 
-object ConsoleProducer { 
+object ConsoleProducer {
 
-  def main(args: Array[String]) { 
+  def main(args: Array[String]) {
     val parser = new OptionParser
     val topicOpt = parser.accepts("topic", "REQUIRED: The topic id to produce messages to.")
                            .withRequiredArg
@@ -52,13 +52,13 @@ object ConsoleProducer {
                              .withRequiredArg
                              .ofType(classOf[java.lang.Long])
                              .defaultsTo(100)
-    val sendTimeoutOpt = parser.accepts("timeout", "If set and the producer is running in asynchronous mode, this gives the maximum amount of time" + 
+    val sendTimeoutOpt = parser.accepts("timeout", "If set and the producer is running in asynchronous mode, this gives the maximum amount of time" +
                                                    " a message will queue awaiting suffient batch size. The value is given in ms.")
                                .withRequiredArg
                                .describedAs("timeout_ms")
                                .ofType(classOf[java.lang.Long])
                                .defaultsTo(1000)
-    val queueSizeOpt = parser.accepts("queue-size", "If set and the producer is running in asynchronous mode, this gives the maximum amount of " + 
+    val queueSizeOpt = parser.accepts("queue-size", "If set and the producer is running in asynchronous mode, this gives the maximum amount of " +
                                                    " messages will queue awaiting suffient batch size.")
                                .withRequiredArg
                                .describedAs("queue_size")
@@ -89,7 +89,7 @@ object ConsoleProducer {
                                  .describedAs("encoder_class")
                                  .ofType(classOf[java.lang.String])
                                  .defaultsTo(classOf[StringEncoder].getName)
-    val messageReaderOpt = parser.accepts("line-reader", "The class name of the class to use for reading lines from standard in. " + 
+    val messageReaderOpt = parser.accepts("line-reader", "The class name of the class to use for reading lines from standard in. " +
                                                           "By default each line is read as a separate message.")
                                   .withRequiredArg
                                   .describedAs("reader_class")
@@ -105,7 +105,10 @@ object ConsoleProducer {
                             .withRequiredArg
                             .describedAs("prop")
                             .ofType(classOf[String])
-                            
+    val securityConfigFileOpt = parser.accepts("security.config.file", "Security config file to use for SSL.")
+                                  .withRequiredArg
+                                  .describedAs("property file")
+                                  .ofType(classOf[java.lang.String])
 
     val options = parser.parse(args : _*)
     for(arg <- List(topicOpt, brokerListOpt)) {
@@ -130,6 +133,7 @@ object ConsoleProducer {
     val valueEncoderClass = options.valueOf(valueEncoderOpt)
     val readerClass = options.valueOf(messageReaderOpt)
     val socketBuffer = options.valueOf(socketBufferSizeOpt)
+    val securityConfigFile = options.valueOf(securityConfigFileOpt);
     val cmdLineProps = parseLineReaderArgs(options.valuesOf(propertyOpt))
     cmdLineProps.put("topic", topic)
 
@@ -140,7 +144,7 @@ object ConsoleProducer {
     props.put("producer.type", if(sync) "sync" else "async")
     if(options.has(batchSizeOpt))
       props.put("batch.num.messages", batchSize.toString)
-    
+
     props.put("message.send.max.retries", options.valueOf(messageSendMaxRetriesOpt).toString)
     props.put("retry.backoff.ms", options.valueOf(retryBackoffMsOpt).toString)
     props.put("queue.buffering.max.ms", sendTimeout.toString)
@@ -151,6 +155,9 @@ object ConsoleProducer {
     props.put("key.serializer.class", keyEncoderClass)
     props.put("serializer.class", valueEncoderClass)
     props.put("send.buffer.bytes", socketBuffer.toString)
+    if (options.has(securityConfigFileOpt)) {
+      props.put("security.config.file", securityConfigFile)
+    }
     val reader = Class.forName(readerClass).newInstance().asInstanceOf[MessageReader[AnyRef, AnyRef]]
     reader.init(System.in, cmdLineProps)
 
@@ -189,7 +196,7 @@ object ConsoleProducer {
     props
   }
 
-  trait MessageReader[K,V] { 
+  trait MessageReader[K,V] {
     def init(inputStream: InputStream, props: Properties) {}
     def readMessage(): KeyedMessage[K,V]
     def close() {}
@@ -227,7 +234,7 @@ object ConsoleProducer {
                 throw new KafkaException("No key found on line " + lineNumber + ": " + line)
             case n =>
               new KeyedMessage(topic,
-                             line.substring(0, n), 
+                             line.substring(0, n),
                              if(n + keySeparator.size > line.size) "" else line.substring(n + keySeparator.size))
           }
         case (line, false) =>

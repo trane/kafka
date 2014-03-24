@@ -45,7 +45,7 @@ import junit.framework.Assert
  * Utility functions to help with testing
  */
 object TestUtils extends Logging {
-  
+
   val IoTmpDir = System.getProperty("java.io.tmpdir")
 
   val Letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -292,8 +292,8 @@ object TestUtils extends Logging {
   /**
    * Create a producer for the given host and port
    */
-  def createProducer[K, V](brokerList: String, 
-                           encoder: Encoder[V] = new DefaultEncoder(), 
+  def createProducer[K, V](brokerList: String,
+                           encoder: Encoder[V] = new DefaultEncoder(),
                            keyEncoder: Encoder[K] = new DefaultEncoder()): Producer[K, V] = {
     val props = new Properties()
     props.put("metadata.broker.list", brokerList)
@@ -346,13 +346,13 @@ object TestUtils extends Logging {
   }
 
   def createBrokersInZk(zkClient: ZkClient, ids: Seq[Int]): Seq[Broker] = {
-    val brokers = ids.map(id => new Broker(id, "localhost", 6667))
-    brokers.foreach(b => ZkUtils.registerBrokerInZk(zkClient, b.id, b.host, b.port, 6000, jmxPort = -1))
+    val brokers = ids.map(id => new Broker(id, "localhost", 6667, false))
+    brokers.foreach(b => ZkUtils.registerBrokerInZk(zkClient, b.id, b.host, b.port, 6000, jmxPort = -1, b.secure))
     brokers
   }
 
   def deleteBrokersInZk(zkClient: ZkClient, ids: Seq[Int]): Seq[Broker] = {
-    val brokers = ids.map(id => new Broker(id, "localhost", 6667))
+    val brokers = ids.map(id => new Broker(id, "localhost", 6667, false))
     brokers.foreach(b => ZkUtils.deletePath(zkClient, ZkUtils.BrokerIdsPath + "/" + b))
     brokers
   }
@@ -367,9 +367,9 @@ object TestUtils extends Logging {
   /**
    * Create a wired format request based on simple basic information
    */
-  def produceRequest(topic: String, 
-                     partition: Int, 
-                     message: ByteBufferMessageSet, 
+  def produceRequest(topic: String,
+                     partition: Int,
+                     message: ByteBufferMessageSet,
                      acks: Int = SyncProducerConfig.DefaultRequiredAcks,
                      timeout: Int = SyncProducerConfig.DefaultAckTimeoutMs,
                      correlationId: Int = 0,
@@ -377,10 +377,10 @@ object TestUtils extends Logging {
     produceRequestWithAcks(Seq(topic), Seq(partition), message, acks, timeout, correlationId, clientId)
   }
 
-  def produceRequestWithAcks(topics: Seq[String], 
-                             partitions: Seq[Int], 
-                             message: ByteBufferMessageSet, 
-                             acks: Int = SyncProducerConfig.DefaultRequiredAcks, 
+  def produceRequestWithAcks(topics: Seq[String],
+                             partitions: Seq[Int],
+                             message: ByteBufferMessageSet,
+                             acks: Int = SyncProducerConfig.DefaultRequiredAcks,
                              timeout: Int = SyncProducerConfig.DefaultAckTimeoutMs,
                              correlationId: Int = 0,
                              clientId: String = SyncProducerConfig.DefaultClientId): ProducerRequest = {
@@ -447,7 +447,7 @@ object TestUtils extends Logging {
       leaderLock.unlock()
     }
   }
-  
+
   /**
    * Execute the given block. If it throws an assert error, retry. Repeat
    * until no error is thrown or the time limit ellapses
@@ -461,7 +461,7 @@ object TestUtils extends Logging {
         return
       } catch {
         case e: AssertionFailedError =>
-          val ellapsed = System.currentTimeMillis - startTime 
+          val ellapsed = System.currentTimeMillis - startTime
           if(ellapsed > maxWaitMs) {
             throw e
           } else {
@@ -515,7 +515,7 @@ object TestUtils extends Logging {
       TestUtils.waitUntilTrue(() =>
         servers.foldLeft(true)(_ && _.apis.metadataCache.keySet.contains(TopicAndPartition(topic, partition))), timeout))
   }
-  
+
   def writeNonsenseToFile(fileName: File, position: Long, size: Int) {
     val file = new RandomAccessFile(fileName, "rw")
     file.seek(position)
@@ -523,7 +523,7 @@ object TestUtils extends Logging {
       file.writeByte(random.nextInt(255))
     file.close()
   }
-  
+
   def appendNonsenseToFile(fileName: File, size: Int) {
     val file = new FileOutputStream(fileName, true)
     for(i <- 0 until size)

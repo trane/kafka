@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -37,7 +37,8 @@ private[kafka] object Broker {
           val brokerInfo = m.asInstanceOf[Map[String, Any]]
           val host = brokerInfo.get("host").get.asInstanceOf[String]
           val port = brokerInfo.get("port").get.asInstanceOf[Int]
-          new Broker(id, host, port)
+          val secure = brokerInfo.get("secure").get.asInstanceOf[Boolean]
+          new Broker(id, host, port, secure)
         case None =>
           throw new BrokerNotAvailableException("Broker id %d does not exist".format(id))
       }
@@ -50,15 +51,16 @@ private[kafka] object Broker {
     val id = buffer.getInt
     val host = readShortString(buffer)
     val port = buffer.getInt
-    new Broker(id, host, port)
+    val secure = buffer.getShort == 1
+    new Broker(id, host, port, secure)
   }
 }
 
-private[kafka] case class Broker(val id: Int, val host: String, val port: Int) {
-  
-  override def toString(): String = new String("id:" + id + ",host:" + host + ",port:" + port)
+private[kafka] case class Broker(val id: Int, val host: String, val port: Int, val secure: Boolean = false) {
 
-  def getConnectionString(): String = host + ":" + port
+  override def toString(): String = new String("id:" + id + ",host:" + host + ",port:" + port + ",secure:" + secure)
+
+  def getConnectionString(): String = host + ":" + port + ":" + (if (secure) 1 else 0)
 
   def writeTo(buffer: ByteBuffer) {
     buffer.putInt(id)
@@ -66,16 +68,16 @@ private[kafka] case class Broker(val id: Int, val host: String, val port: Int) {
     buffer.putInt(port)
   }
 
-  def sizeInBytes: Int = shortStringLength(host) /* host name */ + 4 /* port */ + 4 /* broker id*/
+  def sizeInBytes: Int = shortStringLength(host) /* host name */ + 4 /* port */ + 4 /* broker id*/ + 2 /* secure */
 
   override def equals(obj: Any): Boolean = {
     obj match {
       case null => false
-      case n: Broker => id == n.id && host == n.host && port == n.port
+      case n: Broker => id == n.id && host == n.host && port == n.port && secure == n.secure
       case _ => false
     }
   }
-  
-  override def hashCode(): Int = hashcode(id, host, port)
-  
+
+  override def hashCode(): Int = hashcode(id, host, port, if (secure) 1 else 0)
+
 }

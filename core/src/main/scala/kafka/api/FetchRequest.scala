@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -177,6 +177,7 @@ class FetchRequestBuilder() {
   private var maxWait = FetchRequest.DefaultMaxWait
   private var minBytes = FetchRequest.DefaultMinBytes
   private val requestMap = new collection.mutable.HashMap[TopicAndPartition, PartitionFetchInfo]
+  private var secure = false
 
   def addFetch(topic: String, partition: Int, offset: Long, fetchSize: Int) = {
     requestMap.put(TopicAndPartition(topic, partition), PartitionFetchInfo(offset, fetchSize))
@@ -203,6 +204,11 @@ class FetchRequestBuilder() {
 
   def minBytes(minBytes: Int): FetchRequestBuilder = {
     this.minBytes = minBytes
+    this
+  }
+
+  def secure(secure: Boolean): FetchRequestBuilder = {
+    this.secure = secure
     this
   }
 

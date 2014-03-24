@@ -27,12 +27,14 @@ import kafka.api._
 import org.apache.log4j.Logger
 import scala.Some
 import kafka.common.TopicAndPartition
+import kafka.security.Authentication
 import kafka.api.RequestOrResponse
 import collection.Set
 
 class ControllerChannelManager (private val controllerContext: ControllerContext, config: KafkaConfig) extends Logging {
   private val brokerStateInfo = new HashMap[Int, ControllerBrokerStateInfo]
   private val brokerLock = new Object
+  if (config.secure) Authentication.initialize(config.securityConfig)
   this.logIdent = "[Channel manager on controller " + config.brokerId + "]: "
 
   controllerContext.liveBrokers.foreach(addNewBroker(_))
@@ -80,7 +82,7 @@ class ControllerChannelManager (private val controllerContext: ControllerContext
   private def addNewBroker(broker: Broker) {
     val messageQueue = new LinkedBlockingQueue[(RequestOrResponse, (RequestOrResponse) => Unit)](config.controllerMessageQueueSize)
     debug("Controller %d trying to connect to broker %d".format(config.brokerId,broker.id))
-    val channel = new BlockingChannel(broker.host, broker.port,
+    val channel = new BlockingChannel(broker.host, broker.port, broker.secure,
       BlockingChannel.UseDefaultBufferSize,
       BlockingChannel.UseDefaultBufferSize,
       config.controllerSocketTimeoutMs)

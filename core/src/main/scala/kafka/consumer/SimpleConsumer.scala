@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -21,6 +21,8 @@ import kafka.api._
 import kafka.network._
 import kafka.utils._
 import kafka.common.{ErrorMapping, TopicAndPartition}
+import kafka.security.Authentication
+import kafka.security.SecurityConfig
 
 /**
  * A consumer of kafka messages
@@ -30,11 +32,22 @@ class SimpleConsumer(val host: String,
                      val port: Int,
                      val soTimeout: Int,
                      val bufferSize: Int,
-                     val clientId: String) extends Logging {
+                     val clientId: String,
+                     val secure: Boolean = false,
+                     var securityConfigFile: String = null) extends Logging {
 
   ConsumerConfig.validateClientId(clientId)
+
+  if(secure) {
+    synchronized {
+      if (!Authentication.isInitialized){
+        Authentication.initialize(new SecurityConfig(securityConfigFile))
+      }
+    }
+  }
+
   private val lock = new Object()
-  private val blockingChannel = new BlockingChannel(host, port, bufferSize, BlockingChannel.UseDefaultBufferSize, soTimeout)
+  private val blockingChannel = new BlockingChannel(host, port, secure, bufferSize, BlockingChannel.UseDefaultBufferSize, soTimeout)
   val brokerInfo = "host_%s-port_%s".format(host, port)
   private val fetchRequestAndResponseStats = FetchRequestAndResponseStatsRegistry.getFetchRequestAndResponseStats(clientId)
   private var isClosed = false
@@ -63,7 +76,7 @@ class SimpleConsumer(val host: String,
       isClosed = true
     }
   }
-  
+
   private def sendRequest(request: RequestOrResponse): Receive = {
     lock synchronized {
       getOrMakeConnection()

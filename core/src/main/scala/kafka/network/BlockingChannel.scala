@@ -21,6 +21,7 @@ import java.net.InetSocketAddress
 import java.nio.channels._
 import kafka.utils.{nonthreadsafe, Logging}
 import kafka.api.RequestOrResponse
+import kafka.security.SSLSocketChannel
 
 
 object BlockingChannel{
@@ -32,46 +33,48 @@ object BlockingChannel{
  *
  */
 @nonthreadsafe
-class BlockingChannel( val host: String, 
-                       val port: Int, 
-                       val readBufferSize: Int, 
-                       val writeBufferSize: Int, 
+class BlockingChannel( val host: String,
+                       val port: Int,
+                       val secure: Boolean,
+                       val readBufferSize: Int,
+                       val writeBufferSize: Int,
                        val readTimeoutMs: Int ) extends Logging {
   private var connected = false
   private var channel: SocketChannel = null
   private var readChannel: ReadableByteChannel = null
   private var writeChannel: GatheringByteChannel = null
   private val lock = new Object()
-  
+
   def connect() = lock synchronized  {
     if(!connected) {
-      channel = SocketChannel.open()
+      channel = if (secure) SSLSocketChannel.makeSecureClientConnection(SocketChannel.open(), host, port) else SocketChannel.open()
       if(readBufferSize > 0)
         channel.socket.setReceiveBufferSize(readBufferSize)
       if(writeBufferSize > 0)
         channel.socket.setSendBufferSize(writeBufferSize)
-      channel.configureBlocking(true)
+      if (secure) channel.asInstanceOf[SSLSocketChannel].simulateBlocking(true) else channel.configureBlocking(true)
       channel.socket.setSoTimeout(readTimeoutMs)
       channel.socket.setKeepAlive(true)
       channel.socket.setTcpNoDelay(true)
       channel.connect(new InetSocketAddress(host, port))
 
       writeChannel = channel
-      readChannel = Channels.newChannel(channel.socket().getInputStream)
+      readChannel = Channels.newChannel(Channels.newInputStream(channel))
       connected = true
       // settings may not match what we requested above
       val msg = "Created socket with SO_TIMEOUT = %d (requested %d), SO_RCVBUF = %d (requested %d), SO_SNDBUF = %d (requested %d)."
       debug(msg.format(channel.socket.getSoTimeout,
                        readTimeoutMs,
-                       channel.socket.getReceiveBufferSize, 
+                       channel.socket.getReceiveBufferSize,
                        readBufferSize,
                        channel.socket.getSendBufferSize,
                        writeBufferSize))
     }
   }
-  
+
   def disconnect() = lock synchronized {
-    if(connected || channel != null) {
+    if(connected && channel != null) {
+      debug("Disconnecting channel " + channel.socket.getRemoteSocketAddress());
       // closing the main socket channel *should* close the read channel
       // but let's do it to be sure.
       swallow(channel.close())
@@ -83,7 +86,7 @@ class BlockingChannel( val host: String,
   }
 
   def isConnected = connected
-  
+
   def send(request: RequestOrResponse):Int = {
     if(!connected)
       throw new ClosedChannelException()
@@ -91,7 +94,7 @@ class BlockingChannel( val host: String,
     val send = new BoundedByteBufferSend(request)
     send.writeCompletely(writeChannel)
   }
-  
+
   def receive(): Receive = {
     if(!connected)
       throw new ClosedChannelException()

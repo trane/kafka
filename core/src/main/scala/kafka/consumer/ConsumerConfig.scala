@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -88,19 +88,19 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
 
   /** the socket timeout for network requests. The actual timeout set will be max.fetch.wait + socket.timeout.ms. */
   val socketTimeoutMs = props.getInt("socket.timeout.ms", SocketTimeout)
-  
+
   /** the socket receive buffer for network requests */
   val socketReceiveBufferBytes = props.getInt("socket.receive.buffer.bytes", SocketBufferSize)
-  
+
   /** the number of byes of messages to attempt to fetch */
   val fetchMessageMaxBytes = props.getInt("fetch.message.max.bytes", FetchSize)
 
   /** the number threads used to fetch data */
   val numConsumerFetchers = props.getInt("num.consumer.fetchers", NumConsumerFetchers)
-  
+
   /** if true, periodically commit to zookeeper the offset of messages already fetched by the consumer */
   val autoCommitEnable = props.getBoolean("auto.commit.enable", AutoCommit)
-  
+
   /** the frequency in ms that the consumer offsets are committed to zookeeper */
   val autoCommitIntervalMs = props.getInt("auto.commit.interval.ms", AutoCommitInterval)
 
@@ -109,13 +109,13 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
 
   /** max number of retries during rebalance */
   val rebalanceMaxRetries = props.getInt("rebalance.max.retries", MaxRebalanceRetries)
-  
+
   /** the minimum amount of data the server should return for a fetch request. If insufficient data is available the request will block */
   val fetchMinBytes = props.getInt("fetch.min.bytes", MinFetchBytes)
-  
+
   /** the maximum amount of time the server will block before answering the fetch request if there isn't sufficient data to immediately satisfy fetch.min.bytes */
   val fetchWaitMaxMs = props.getInt("fetch.wait.max.ms", MaxFetchWaitMs)
-  
+
   /** backoff time between retries during rebalance */
   val rebalanceBackoffMs = props.getInt("rebalance.backoff.ms", zkSyncTimeMs)
 
@@ -135,6 +135,9 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
    * Client id is specified by the kafka consumer client, used to distinguish different clients
    */
   val clientId = props.getString("client.id", groupId)
+
+  /** security config file */
+  val securityConfigFile = props.getString("security.config.file",null);
 
   validate(this)
 }

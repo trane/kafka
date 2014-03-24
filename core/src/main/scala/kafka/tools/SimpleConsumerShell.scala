@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -93,6 +93,10 @@ object SimpleConsumerShell extends Logging {
         "skip it instead of halt.")
     val noWaitAtEndOfLogOpt = parser.accepts("no-wait-at-logend",
         "If set, when the simple consumer reaches the end of the Log, it will stop, not waiting for new produced messages")
+    val securityConfigFileOpt = parser.accepts("security.config.file", "Security config file to use for SSL.")
+                           .withRequiredArg
+                           .describedAs("property file")
+                           .ofType(classOf[java.lang.String])
 
     val options = parser.parse(args : _*)
     for(arg <- List(brokerListOpt, topicOpt, partitionIdOpt)) {
@@ -118,6 +122,7 @@ object SimpleConsumerShell extends Logging {
 
     val messageFormatterClass = Class.forName(options.valueOf(messageFormatterOpt))
     val formatterArgs = MessageFormatter.tryParseFormatterArgs(options.valuesOf(messageFormatterArgOpt))
+    val securityConfigFile = options.valueOf(securityConfigFileOpt)
 
     val fetchRequestBuilder = new FetchRequestBuilder()
                        .clientId(clientId)
@@ -128,7 +133,7 @@ object SimpleConsumerShell extends Logging {
     // getting topic metadata
     info("Getting topic metatdata...")
     val metadataTargetBrokers = ClientUtils.parseBrokerList(options.valueOf(brokerListOpt))
-    val topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic), metadataTargetBrokers, clientId, maxWaitMs).topicsMetadata
+    val topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic), metadataTargetBrokers, clientId, securityConfigFile, maxWaitMs).topicsMetadata
     if(topicsMetadata.size != 1 || !topicsMetadata(0).topic.equals(topic)) {
       System.err.println(("Error: no valid topic metadata for topic: %s, " + "what we get from server is only: %s").format(topic, topicsMetadata))
       System.exit(1)
@@ -169,7 +174,7 @@ object SimpleConsumerShell extends Logging {
     }
     if (startingOffset < 0) {
       val simpleConsumer = new SimpleConsumer(fetchTargetBroker.host, fetchTargetBroker.port, ConsumerConfig.SocketTimeout,
-                                              ConsumerConfig.SocketBufferSize, clientId)
+                                              ConsumerConfig.SocketBufferSize, clientId, fetchTargetBroker.secure, securityConfigFile)
       try {
         startingOffset = simpleConsumer.earliestOrLatestOffset(TopicAndPartition(topic, partitionId), startingOffset,
                                                                Request.DebuggingConsumerId)
@@ -188,9 +193,9 @@ object SimpleConsumerShell extends Logging {
     formatter.init(formatterArgs)
 
     val replicaString = if(replicaId > 0) "leader" else "replica"
-    info("Starting simple consumer shell to partition [%s, %d], %s [%d], host and port: [%s, %d], from offset [%d]"
-                 .format(topic, partitionId, replicaString, replicaId, fetchTargetBroker.host, fetchTargetBroker.port, startingOffset))
-    val simpleConsumer = new SimpleConsumer(fetchTargetBroker.host, fetchTargetBroker.port, 10000, 64*1024, clientId)
+    info("Starting simple consumer shell to partition [%s, %d], %s [%d], host and port: [%s, %d], secure: [%s] , from offset [%d]"
+                  .format(topic, partitionId, replicaString, replicaId, fetchTargetBroker.host, fetchTargetBroker.port, fetchTargetBroker.secure, startingOffset))
+    val simpleConsumer = new SimpleConsumer(fetchTargetBroker.host, fetchTargetBroker.port, 10000, 64*1024, clientId, fetchTargetBroker.secure, securityConfigFile)
     val thread = Utils.newThread("kafka-simpleconsumer-shell", new Runnable() {
       def run() {
         var offset = startingOffset

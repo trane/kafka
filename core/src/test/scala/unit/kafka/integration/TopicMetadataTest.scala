@@ -68,7 +68,7 @@ class TopicMetadataTest extends JUnit3Suite with ZooKeeperTestHarness {
     AdminUtils.createTopic(zkClient, topic, 1, 1)
     TestUtils.waitUntilMetadataIsPropagated(Seq(server1), topic, 0, 1000)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, topic, 0, 1000)
-    var topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic),brokers,"TopicMetadataTest-testBasicTopicMetadata",
+    var topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic),brokers,"TopicMetadataTest-testBasicTopicMetadata",null,
       2000,0).topicsMetadata
     assertEquals(ErrorMapping.NoError, topicsMetadata.head.errorCode)
     assertEquals(ErrorMapping.NoError, topicsMetadata.head.partitionsMetadata.head.errorCode)
@@ -92,7 +92,7 @@ class TopicMetadataTest extends JUnit3Suite with ZooKeeperTestHarness {
     TestUtils.waitUntilMetadataIsPropagated(Seq(server1), topic2, 0, 1000)
 
     // issue metadata request with empty list of topics
-    var topicsMetadata = ClientUtils.fetchTopicMetadata(Set.empty, brokers, "TopicMetadataTest-testGetAllTopicMetadata",
+    var topicsMetadata = ClientUtils.fetchTopicMetadata(Set.empty, brokers, "TopicMetadataTest-testGetAllTopicMetadata",null,
       2000, 0).topicsMetadata
     assertEquals(ErrorMapping.NoError, topicsMetadata.head.errorCode)
     assertEquals(2, topicsMetadata.size)
@@ -111,7 +111,7 @@ class TopicMetadataTest extends JUnit3Suite with ZooKeeperTestHarness {
   def testAutoCreateTopic {
     // auto create topic
     val topic = "testAutoCreateTopic"
-    var topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic),brokers,"TopicMetadataTest-testAutoCreateTopic",
+    var topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic),brokers,"TopicMetadataTest-testAutoCreateTopic",null,
       2000,0).topicsMetadata
     assertEquals(ErrorMapping.LeaderNotAvailableCode, topicsMetadata.head.errorCode)
     assertEquals("Expecting metadata only for 1 topic", 1, topicsMetadata.size)
@@ -123,7 +123,7 @@ class TopicMetadataTest extends JUnit3Suite with ZooKeeperTestHarness {
     TestUtils.waitUntilMetadataIsPropagated(Seq(server1), topic, 0, 1000)
 
     // retry the metadata for the auto created topic
-    topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic),brokers,"TopicMetadataTest-testBasicTopicMetadata",
+    topicsMetadata = ClientUtils.fetchTopicMetadata(Set(topic),brokers,"TopicMetadataTest-testBasicTopicMetadata",null,
       2000,0).topicsMetadata
     assertEquals(ErrorMapping.NoError, topicsMetadata.head.errorCode)
     assertEquals(ErrorMapping.NoError, topicsMetadata.head.partitionsMetadata.head.errorCode)

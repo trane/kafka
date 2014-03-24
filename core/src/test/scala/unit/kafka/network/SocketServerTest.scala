@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -37,6 +37,8 @@ class SocketServerTest extends JUnitSuite {
   val server: SocketServer = new SocketServer(0,
                                               host = null,
                                               port = kafka.utils.TestUtils.choosePort,
+                                              secure = false,
+                                              securityConfig = null,
                                               numProcessorThreads = 1,
                                               maxQueuedRequests = 50,
                                               sendBufferSize = 300000,
@@ -52,7 +54,7 @@ class SocketServerTest extends JUnitSuite {
     outgoing.flush()
   }
 
-  def receiveResponse(socket: Socket): Array[Byte] = { 
+  def receiveResponse(socket: Socket): Array[Byte] = {
     val incoming = new DataInputStream(socket.getInputStream)
     val len = incoming.readInt()
     val response = new Array[Byte](len)

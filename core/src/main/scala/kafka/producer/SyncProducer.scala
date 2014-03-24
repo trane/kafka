@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -21,6 +21,7 @@ import kafka.api._
 import kafka.network.{BlockingChannel, BoundedByteBufferSend, Receive}
 import kafka.utils._
 import java.util.Random
+import kafka.security.Authentication
 
 object SyncProducer {
   val RequestKey: Short = 0
@@ -35,8 +36,12 @@ class SyncProducer(val config: SyncProducerConfig) extends Logging {
 
   private val lock = new Object()
   @volatile private var shutdown: Boolean = false
-  private val blockingChannel = new BlockingChannel(config.host, config.port, BlockingChannel.UseDefaultBufferSize,
-    config.sendBufferBytes, config.requestTimeoutMs)
+
+  // If secure setup SSLContext
+  if (config.secure) Authentication.initialize(config.securityConfig)
+
+  private val blockingChannel = new BlockingChannel(config.host, config.port, config.secure,
+    BlockingChannel.UseDefaultBufferSize, config.sendBufferBytes, config.requestTimeoutMs)
   val brokerInfo = "host_%s-port_%s".format(config.host, config.port)
   val producerRequestStats = ProducerRequestStatsRegistry.getProducerRequestStats(config.clientId)
 
@@ -127,23 +132,23 @@ class SyncProducer(val config: SyncProducerConfig) extends Logging {
   private def disconnect() {
     try {
       if(blockingChannel.isConnected) {
-        info("Disconnecting from " + config.host + ":" + config.port)
+        info("Disconnecting from " + config.host + ":" + config.port + ":" + config.secure)
         blockingChannel.disconnect()
       }
     } catch {
       case e: Exception => error("Error on disconnect: ", e)
     }
   }
-    
+
   private def connect(): BlockingChannel = {
     if (!blockingChannel.isConnected && !shutdown) {
       try {
         blockingChannel.connect()
-        info("Connected to " + config.host + ":" + config.port + " for producing")
+        info("Connected to " + config.host + ":" + config.port + ":" + config.secure + " for producing")
       } catch {
         case e: Exception => {
           disconnect()
-          error("Producer connection to " +  config.host + ":" + config.port + " unsuccessful", e)
+          error("Producer connection to " +  config.host + ":" + config.port + ":" + config.secure + " unsuccessful", e)
           throw e
         }
       }
