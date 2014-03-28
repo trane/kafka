@@ -28,6 +28,15 @@ object Authentication extends Logging {
   private var initialized = false
   
   def isInitialized = initialized;
+
+  private var _sslContext : SSLContext = null;
+
+  def sslContext = {
+    if (!initialized){
+        throw new IllegalStateException("Authentication is not initialized. Authentication.initialize() should be called before using sslContext");
+    }
+    _sslContext;
+  }
   
   def initialize(config: SecurityConfig) {
     // If secure setup SSLContext
@@ -58,9 +67,10 @@ object Authentication extends Logging {
 	      case _ => null
 	    }
 	      
-	    val sslContext = SSLContext.getInstance("TLS")
-	    sslContext.init(kms, tms, null)
-	    SSLContext.setDefault(sslContext)
+	    _sslContext = SSLContext.getInstance("TLS")
+	    _sslContext.init(kms, tms, null)
     }
   }
+
+
 }
