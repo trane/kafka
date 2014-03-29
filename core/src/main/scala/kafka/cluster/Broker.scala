@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -43,7 +43,7 @@ private[kafka] object Broker {
           throw new BrokerNotAvailableException("Broker id %d does not exist".format(id))
       }
     } catch {
-      case t => throw new KafkaException("Failed to parse the broker info from zookeeper: " + brokerInfoString, t)
+      case t: Throwable => throw new KafkaException("Failed to parse the broker info from zookeeper: " + brokerInfoString, t)
     }
   }
 
@@ -57,9 +57,10 @@ private[kafka] object Broker {
 }
 
 private[kafka] case class Broker(val id: Int, val host: String, val port: Int, val secure: Boolean = false) {
-  
+
   override def toString(): String = new String("id:" + id + ",host:" + host + ",port:" + port + ",secure:" + secure)
 
+// TODO: SEE IF WE NEED TO DELETE THIS
   def getZkString(): String = host + ":" + port + ":" + secure
 
   def getConnectionString(): String = host + ":" + port + ":" + (if (secure) 1 else 0)
@@ -80,7 +81,7 @@ private[kafka] case class Broker(val id: Int, val host: String, val port: Int, v
       case _ => false
     }
   }
-  
+
   override def hashCode(): Int = hashcode(id, host, port, if (secure) 1 else 0)
-  
+
 }

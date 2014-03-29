@@ -20,7 +20,7 @@ then
   exit 1
 fi
 
-snappy=~/.ivy2/cache/org.xerial.snappy/snappy-java/bundles/snappy-java-1.0.4.1.jar
+snappy=~/.ivy2/cache/org.xerial.snappy/snappy-java/bundles/snappy-java-1.0.5.jar
 CLASSPATH=$CLASSPATH:$snappy
 library=~/.ivy2/cache/org.scala-lang/scala-library/jars/scala-library-2.8.0.jar
 CLASSPATH=$CLASSPATH:$library
@@ -66,8 +66,14 @@ done
 if [ -z "$KAFKA_JMX_OPTS" ]; then
   KAFKA_JMX_OPTS="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false  -Dcom.sun.management.jmxremote.ssl=false "
 fi
+
+# Log4j settings
+if [ -z "$KAFKA_LOG4J_OPTS" ]; then
+  KAFKA_LOG4J_OPTS="-Dlog4j.configuration=file:$base_dir/config/log4j.properties"
+fi
+
 if [ -z "$KAFKA_OPTS" ]; then
-  KAFKA_OPTS="-Xmx512M -server  -Dlog4j.configuration=file:$base_dir/config/log4j.properties"
+  KAFKA_OPTS="-Xmx512M -server $KAFKA_LOG4J_OPTS"
 fi
 if [  $JMX_PORT ]; then
   KAFKA_JMX_OPTS="$KAFKA_JMX_OPTS -Dcom.sun.management.jmxremote.port=$JMX_PORT "

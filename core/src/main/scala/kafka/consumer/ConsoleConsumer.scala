@@ -110,7 +110,7 @@ object ConsoleConsumer extends Logging {
             .withRequiredArg
             .describedAs("ms")
             .ofType(classOf[java.lang.Integer])
-            .defaultsTo(10*1000)
+            .defaultsTo(ConsumerConfig.AutoCommitInterval)
     val maxMessagesOpt = parser.accepts("max-messages", "The maximum number of messages to consume before exiting. If not set, consumption is continual.")
             .withRequiredArg
             .describedAs("num_messages")
@@ -212,7 +212,7 @@ object ConsoleConsumer extends Logging {
           formatter.writeTo(messageAndTopic.key, messageAndTopic.message, System.out)
           numMessages += 1
         } catch {
-          case e =>
+          case e: Throwable =>
             if (skipMessageOnError)
               error("Error processing message, skipping this message: ", e)
             else
@@ -228,7 +228,7 @@ object ConsoleConsumer extends Logging {
         }
       }
     } catch {
-      case e => error("Error processing message, stopping consumer: ", e)
+      case e: Throwable => error("Error processing message, stopping consumer: ", e)
     }
     System.err.println("Consumed %d messages".format(numMessages))
     System.out.flush()
@@ -255,7 +255,7 @@ object ConsoleConsumer extends Logging {
       zk.deleteRecursive(dir)
       zk.close()
     } catch {
-      case _ => // swallow
+      case _: Throwable => // swallow
     }
   }
 }
@@ -297,10 +297,10 @@ class DefaultMessageFormatter extends MessageFormatter {
   
   def writeTo(key: Array[Byte], value: Array[Byte], output: PrintStream) {
     if(printKey) {
-      output.write(key)
+      output.write(if (key == null) "null".getBytes() else key)
       output.write(keySeparator)
     }
-    output.write(value)
+    output.write(if (value == null) "null".getBytes() else value)
     output.write(lineSeparator)
   }
 }

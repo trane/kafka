@@ -1010,6 +1010,7 @@ def start_producer_in_thread(testcaseEnv, entityConfigList, producerConfig, kafk
             cmdList = ["ssh " + host,
                        "'JAVA_HOME=" + javaHome,
                        "JMX_PORT=" + jmxPort,
+                       "KAFKA_LOG4J_OPTS=-Dlog4j.configuration=file:%s/config/test-log4j.properties" % kafkaHome,
                        kafkaRunClassBin + " kafka.perf.ProducerPerformance",
                        "--broker-list " + brokerListStr,
                        "--initial-message-id " + str(initMsgId),
@@ -1045,8 +1046,10 @@ def start_producer_in_thread(testcaseEnv, entityConfigList, producerConfig, kafk
                 cmdList = ["ssh " + host,
                        "'JAVA_HOME=" + javaHome,
                        "JMX_PORT=" + jmxPort,
+                       "KAFKA_LOG4J_OPTS=-Dlog4j.configuration=file:%s/config/test-log4j.properties" % kafkaHome,
                        kafkaRunClassBin + " kafka.perf.ProducerPerformance",
                        "--brokerinfo " + brokerInfoStr,
+                       "--initial-message-id " + str(initMsgId),
                        "--messages " + noMsgPerBatch,
                        "--topic " + topic,
                        "--threads " + threads,
@@ -1125,7 +1128,7 @@ def create_topic(systemTestEnv, testcaseEnv):
         zkHost          = system_test_utils.get_data_by_lookup_keyval(clusterEntityConfigDictList, "role", "zookeeper", "hostname")
         kafkaHome       = system_test_utils.get_data_by_lookup_keyval(clusterEntityConfigDictList, "entity_id", zkEntityId, "kafka_home")
         javaHome        = system_test_utils.get_data_by_lookup_keyval(clusterEntityConfigDictList, "entity_id", zkEntityId, "java_home")
-        createTopicBin  = kafkaHome + "/bin/kafka-create-topic.sh"
+        createTopicBin  = kafkaHome + "/bin/kafka-topics.sh --create"
 
         logger.debug("zkEntityId     : " + zkEntityId, extra=d)
         logger.debug("createTopicBin : " + createTopicBin, extra=d)
@@ -1152,8 +1155,8 @@ def create_topic(systemTestEnv, testcaseEnv):
                        createTopicBin,
                        " --topic "     + topic,
                        " --zookeeper " + zkConnectStr,
-                       " --replica "   + testcaseEnv.testcaseArgumentsDict["replica_factor"],
-                       " --partition " + testcaseEnv.testcaseArgumentsDict["num_partition"] + " >> ",
+                       " --replication-factor "   + testcaseEnv.testcaseArgumentsDict["replica_factor"],
+                       " --partitions " + testcaseEnv.testcaseArgumentsDict["num_partition"] + " >> ",
                        testcaseBaseDir + "/logs/create_source_cluster_topic.log'"]
     
             cmdStr = " ".join(cmdList)
@@ -1876,10 +1879,16 @@ def get_controller_attributes(systemTestEnv, testcaseEnv):
     logger.debug("executing command [" + cmdStr + "]", extra=d)
     subproc = system_test_utils.sys_call_return_subproc(cmdStr)
     for line in subproc.stdout.readlines():
-        brokerid = line.rstrip('\n')
-        controllerDict["brokerid"]  = brokerid
-        controllerDict["entity_id"] = system_test_utils.get_data_by_lookup_keyval(
-                                          tcConfigsList, "broker.id", brokerid, "entity_id")
+        if "brokerid" in line:
+            json_str  = line.rstrip('\n')
+            json_data = json.loads(json_str)
+            brokerid  = str(json_data["brokerid"])
+            controllerDict["brokerid"]  = brokerid
+            controllerDict["entity_id"] = system_test_utils.get_data_by_lookup_keyval(
+                                              tcConfigsList, "broker.id", brokerid, "entity_id")
+        else:
+            pass
+
     return controllerDict
 
 def getMinCommonStartingOffset(systemTestEnv, testcaseEnv, clusterName="source"):
@@ -2210,4 +2219,61 @@ def validate_index_log(systemTestEnv, testcaseEnv, clusterName="source"):
         validationStatusDict["Validate index log in cluster [" + clusterName + "]"] = "PASSED"
     else:
         validationStatusDict["Validate index log in cluster [" + clusterName + "]"] = "FAILED"
+
+def get_leader_attributes(systemTestEnv, testcaseEnv):
+
+    logger.info("Querying Zookeeper for leader info ...", extra=d)
+
+    # keep track of leader data in this dict such as broker id & entity id
+    leaderDict = {} 
+
+    clusterConfigsList = systemTestEnv.clusterEntityConfigDictList
+    tcConfigsList      = testcaseEnv.testcaseConfigsList
+
+    zkDictList         = system_test_utils.get_dict_from_list_of_dicts(clusterConfigsList, "role", "zookeeper")
+    firstZkDict        = zkDictList[0]
+    hostname           = firstZkDict["hostname"]
+    zkEntityId         = firstZkDict["entity_id"]
+    clientPort         = system_test_utils.get_data_by_lookup_keyval(tcConfigsList, "entity_id", zkEntityId, "clientPort")
+    kafkaHome          = system_test_utils.get_data_by_lookup_keyval(clusterConfigsList, "entity_id", zkEntityId, "kafka_home")
+    javaHome           = system_test_utils.get_data_by_lookup_keyval(clusterConfigsList, "entity_id", zkEntityId, "java_home")
+    kafkaRunClassBin   = kafkaHome + "/bin/kafka-run-class.sh"
+
+    # this should have been updated in start_producer_in_thread
+    producerTopicsString = testcaseEnv.producerTopicsString
+    topics = producerTopicsString.split(',')
+    zkQueryStr = "get /brokers/topics/" + topics[0] + "/partitions/0/state"
+    brokerid   = ''
+
+    cmdStrList = ["ssh " + hostname,
+                  "\"JAVA_HOME=" + javaHome,
+                  kafkaRunClassBin + " org.apache.zookeeper.ZooKeeperMain",
+                  "-server " + testcaseEnv.userDefinedEnvVarDict["sourceZkConnectStr"],
+                  zkQueryStr + " 2> /dev/null | tail -1\""]
+    cmdStr = " ".join(cmdStrList)
+    logger.debug("executing command [" + cmdStr + "]", extra=d)
+
+    subproc = system_test_utils.sys_call_return_subproc(cmdStr)
+    for line in subproc.stdout.readlines():
+        logger.debug("zk returned : " + line, extra=d)
+        if "\"leader\"" in line:
+            line = line.rstrip('\n')
+            json_data = json.loads(line)
+            for key,val in json_data.items():
+                if key == 'leader':
+                    brokerid = str(val)
+
+            leaderDict["brokerid"]  = brokerid
+            leaderDict["topic"]     = topics[0]
+            leaderDict["partition"] = '0'
+            leaderDict["entity_id"] = system_test_utils.get_data_by_lookup_keyval(
+                                          tcConfigsList, "broker.id", brokerid, "entity_id")
+            leaderDict["hostname"]  = system_test_utils.get_data_by_lookup_keyval(
+                                          clusterConfigsList, "entity_id", leaderDict["entity_id"], "hostname")
+            break
+
+    print leaderDict
+    return leaderDict
+
+
 

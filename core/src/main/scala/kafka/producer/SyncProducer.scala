@@ -84,7 +84,7 @@ class SyncProducer(val config: SyncProducerConfig) extends Logging {
           // no way to tell if write succeeded. Disconnect and re-throw exception to let client handle retry
           disconnect()
           throw e
-        case e => throw e
+        case e: Throwable => throw e
       }
       response
     }
@@ -123,11 +123,6 @@ class SyncProducer(val config: SyncProducerConfig) extends Logging {
       disconnect()
       shutdown = true
     }
-  }
-
-  private def reconnect() {
-    disconnect()
-    connect()
   }
 
   /**

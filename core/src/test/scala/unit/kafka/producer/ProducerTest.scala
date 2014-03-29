@@ -17,6 +17,7 @@
 
 package kafka.producer
 
+import org.scalatest.TestFailedException
 import org.scalatest.junit.JUnit3Suite
 import kafka.consumer.SimpleConsumer
 import kafka.message.Message
@@ -26,14 +27,13 @@ import org.apache.log4j.{Level, Logger}
 import org.junit.Test
 import kafka.utils._
 import java.util
-import kafka.admin.CreateTopicCommand
+import kafka.admin.AdminUtils
 import util.Properties
 import kafka.api.FetchRequestBuilder
-import kafka.common.FailedToSendMessageException
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
-
+import kafka.common.{ErrorMapping, FailedToSendMessageException}
 
 
 class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
@@ -49,15 +49,11 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
   private var servers = List.empty[KafkaServer]
 
   private val props1 = TestUtils.createBrokerConfig(brokerId1, port1)
-  private val config1 = new KafkaConfig(props1) {
-    override val hostName = "localhost"
-    override val numPartitions = 4
-  }
+  props1.put("num.partitions", "4")
+  private val config1 = new KafkaConfig(props1)
   private val props2 = TestUtils.createBrokerConfig(brokerId2, port2)
-  private val config2 = new KafkaConfig(props2) {
-    override val hostName = "localhost"
-    override val numPartitions = 4
-  }
+  props2.put("num.partitions", "4")
+  private val config2 = new KafkaConfig(props2)
 
   override def setUp() {
     super.setUp()
@@ -81,18 +77,16 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
     // restore set request handler logger to a higher level
     requestHandlerLogger.setLevel(Level.ERROR)
     server1.shutdown
-    server1.awaitShutdown()
     server2.shutdown
-    server2.awaitShutdown()
     Utils.rm(server1.config.logDirs)
     Utils.rm(server2.config.logDirs)
     super.tearDown()
   }
 
-
+  @Test
   def testUpdateBrokerPartitionInfo() {
     val topic = "new-topic"
-    CreateTopicCommand.createTopic(zkClient, "new-topic", 1, 2)
+    AdminUtils.createTopic(zkClient, topic, 1, 2)
     // wait until the update metadata request for new topic reaches all servers
     TestUtils.waitUntilMetadataIsPropagated(servers, topic, 0, 500)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, topic, 0, 500)
@@ -107,7 +101,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
       fail("Test should fail because the broker list provided are not valid")
     } catch {
       case e: FailedToSendMessageException =>
-      case oe => fail("fails with exception", oe)
+      case oe: Throwable => fail("fails with exception", oe)
     } finally {
       producer1.close()
     }
@@ -120,7 +114,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
     try{
       producer2.send(new KeyedMessage[String, String](topic, "test", "test1"))
     } catch {
-      case e => fail("Should succeed sending the message", e)
+      case e: Throwable => fail("Should succeed sending the message", e)
     } finally {
       producer2.close()
     }
@@ -133,7 +127,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
     try{
       producer3.send(new KeyedMessage[String, String](topic, "test", "test1"))
     } catch {
-      case e => fail("Should succeed sending the message", e)
+      case e: Throwable => fail("Should succeed sending the message", e)
     } finally {
       producer3.close()
     }
@@ -158,7 +152,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
 
     val topic = "new-topic"
     // create topic with 1 partition and await leadership
-    CreateTopicCommand.createTopic(zkClient, topic, 1, 2)
+    AdminUtils.createTopic(zkClient, topic, 1, 2)
     TestUtils.waitUntilMetadataIsPropagated(servers, topic, 0, 1000)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, topic, 0, 500)
 
@@ -190,7 +184,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
     }
     catch {
       case se: FailedToSendMessageException => true
-      case e => fail("Not expected", e)
+      case e: Throwable => fail("Not expected", e)
     }
     finally {
       producer2.close()
@@ -209,7 +203,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
 
     val topic = "new-topic"
     // create topic
-    CreateTopicCommand.createTopic(zkClient, topic, 4, 2, "0,0,0,0")
+    AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkClient, topic, Map(0->Seq(0), 1->Seq(0), 2->Seq(0), 3->Seq(0)))
     // waiting for 1 partition is enough
     TestUtils.waitUntilMetadataIsPropagated(servers, topic, 0, 1000)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, topic, 0, 500)
@@ -224,7 +218,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
       // on broker 0
       producer.send(new KeyedMessage[String, String](topic, "test", "test1"))
     } catch {
-      case e => fail("Unexpected exception: " + e)
+      case e: Throwable => fail("Unexpected exception: " + e)
     }
 
     // kill the broker
@@ -236,7 +230,8 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
       producer.send(new KeyedMessage[String, String](topic, "test", "test1"))
       fail("Should fail since no leader exists for the partition.")
     } catch {
-      case e => // success
+      case e : TestFailedException => throw e // catch and re-throw the failure message
+      case e2: Throwable => // otherwise success
     }
 
     // restart server 1
@@ -271,7 +266,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
 
     val topic = "new-topic"
     // create topics in ZK
-    CreateTopicCommand.createTopic(zkClient, topic, 4, 2, "0:1,0:1,0:1,0:1")
+    AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkClient, topic, Map(0->Seq(0,1)))
     TestUtils.waitUntilMetadataIsPropagated(servers, topic, 0, 1000)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, topic, 0, 500)
 
@@ -285,7 +280,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
       assertTrue("Message set should have 1 message", messageSet1.hasNext)
       assertEquals(new Message("test".getBytes), messageSet1.next.message)
     } catch {
-      case e => case e: Exception => producer.close; fail("Not expected", e)
+      case e: Throwable => case e: Exception => producer.close; fail("Not expected", e)
     }
 
     // stop IO threads and request handling, but leave networking operational
@@ -301,7 +296,7 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
       case e: FailedToSendMessageException => /* success */
       case e: Exception => fail("Not expected", e)
     } finally {
-      producer.close
+      producer.close()
     }
     val t2 = SystemTime.milliseconds
 
@@ -309,5 +304,27 @@ class ProducerTest extends JUnit3Suite with ZooKeeperTestHarness with Logging{
     // we do this because the DefaultEventHandler retries a number of times
     assertTrue((t2-t1) >= timeoutMs*config.messageSendMaxRetries)
   }
-}
+  
+  @Test
+  def testSendNullMessage() {
+    val props = new Properties()
+    props.put("serializer.class", "kafka.serializer.StringEncoder")
+    props.put("partitioner.class", "kafka.utils.StaticPartitioner")
+    props.put("metadata.broker.list", TestUtils.getBrokerListStrFromConfigs(Seq(config1, config2)))
+    
+    val config = new ProducerConfig(props)
+    val producer = new Producer[String, String](config)
+    try {
 
+      // create topic
+      AdminUtils.createTopic(zkClient, "new-topic", 2, 1)
+      assertTrue("Topic new-topic not created after timeout", TestUtils.waitUntilTrue(() =>
+        AdminUtils.fetchTopicMetadataFromZk("new-topic", zkClient).errorCode != ErrorMapping.UnknownTopicOrPartitionCode, zookeeper.tickTime))
+      TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, "new-topic", 0, 500)
+    
+      producer.send(new KeyedMessage[String, String]("new-topic", "key", null))
+    } finally {
+      producer.close()
+    }
+  }
+}

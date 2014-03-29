@@ -55,14 +55,14 @@ class SocketServer(val brokerId: Int,
   def startup() {
     // If secure setup SSLContext
     if (secure) Authentication.initialize(securityConfig)
-    
+
     for(i <- 0 until numProcessorThreads) {
       processors(i) = new Processor(i, time, maxRequestSize, requestChannel, secure)
       Utils.newThread("kafka-processor-%d-%d".format(port, i), processors(i), false).start()
     }
     // register the processor threads for notification of responses
     requestChannel.addResponseListener((id:Int) => processors(id).wakeup())
-   
+
     // start accepting connections
     this.acceptor = new Acceptor(host, port, secure, securityConfig, processors, sendBufferSize, recvBufferSize)
     Utils.newThread("kafka-acceptor", acceptor, false).start()
@@ -124,12 +124,12 @@ private[kafka] abstract class AbstractServerThread extends Runnable with Logging
    * Is the server still running?
    */
   protected def isRunning = alive.get
-  
+
   /**
    * Wakeup the thread for selection.
    */
   def wakeup() = selector.wakeup()
-  
+
 }
 
 /**
@@ -174,12 +174,12 @@ private[kafka] class Acceptor(val host: String, val port: Int, val secure: Boole
     swallowError(selector.close())
     shutdownComplete()
   }
-  
+
   /*
    * Create a server socket to listen for connections on.
    */
   def openServerSocket(host: String, port: Int): ServerSocketChannel = {
-    val socketAddress = 
+    val socketAddress =
       if(host == null || host.trim.isEmpty)
         new InetSocketAddress(port)
       else
@@ -190,7 +190,7 @@ private[kafka] class Acceptor(val host: String, val port: Int, val secure: Boole
       serverChannel.socket.bind(socketAddress)
       info("Awaiting socket connections on %s:%d.".format(socketAddress.getHostName, port))
     } catch {
-      case e: SocketException => 
+      case e: SocketException =>
         throw new KafkaException("Socket server failed to bind to %s:%d: %s.".format(socketAddress.getHostName, port, e.getMessage), e)
     }
     serverChannel
@@ -229,7 +229,7 @@ private[kafka] class Processor(val id: Int,
                                val maxRequestSize: Int,
                                val requestChannel: RequestChannel,
                                val secure: Boolean) extends AbstractServerThread {
-  
+
   private val newConnections = new ConcurrentLinkedQueue[SocketChannel]()
 
   override def run() {
@@ -290,31 +290,39 @@ private[kafka] class Processor(val id: Int,
       val key = curr.request.requestKey.asInstanceOf[SelectionKey]
       try {
         val channelTuple = key.attachment.asInstanceOf[ChannelTuple]
-        if(curr.responseSend == null) {
-          // a null response send object indicates that there is no response to send to the client.
-          // In this case, we just want to turn the interest ops to READ to be able to read more pipelined requests
-          // that are sitting in the server's socket buffer
-          trace("Socket server received empty response to send, registering for read: " + curr)
-          key.interestOps(SelectionKey.OP_READ)
-          key.attach(ChannelTuple(null, channelTuple.sslChannel))
-          curr.request.updateRequestMetrics
-          readBufferedSSLDataIfNeeded(key, channelTuple)
-        } else {
-          trace("Socket server received response to send, registering for write: " + curr)
-          key.interestOps(SelectionKey.OP_WRITE)
-          key.attach(ChannelTuple(curr, channelTuple.sslChannel))
+        curr.responseAction match {
+          case RequestChannel.NoOpAction => {
+            // There is no response to send to the client, we need to read more pipelined requests
+            // that are sitting in the server's socket buffer
+            curr.request.updateRequestMetrics
+            trace("Socket server received empty response to send, registering for read: " + curr)
+            key.interestOps(SelectionKey.OP_READ)
+            key.attach(ChannelTuple(null, channelTuple.sslChannel))
+            readBufferedSSLDataIfNeeded(key, channelTuple)
+          }
+          case RequestChannel.SendAction => {
+            trace("Socket server received response to send, registering for write: " + curr)
+            key.interestOps(SelectionKey.OP_WRITE)
+            key.attach(ChannelTuple(curr, channelTuple.sslChannel))
+          }
+          case RequestChannel.CloseConnectionAction => {
+            curr.request.updateRequestMetrics
+            trace("Closing socket connection actively according to the response code.")
+            close(key)
+          }
+          case responseCode => throw new KafkaException("No mapping found for response code " + responseCode)
         }
       } catch {
         case e: CancelledKeyException => {
           debug("Ignoring response for closed socket.")
           close(key)
         }
-      }finally {
+      } finally {
         curr = requestChannel.receiveResponse(id)
       }
     }
   }
-  
+
   private def close(key: SelectionKey) {
     try {
       val channel = channelFor(key)

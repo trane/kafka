@@ -18,12 +18,14 @@
 package kafka.consumer
 
 import org.I0Itec.zkclient.ZkClient
-import kafka.server.{AbstractFetcherThread, AbstractFetcherManager}
+import kafka.server.{BrokerAndInitialOffset, AbstractFetcherThread, AbstractFetcherManager}
 import kafka.cluster.{Cluster, Broker}
 import scala.collection.immutable
+import scala.collection.Map
 import collection.mutable.HashMap
 import scala.collection.mutable
 import java.util.concurrent.locks.ReentrantLock
+import kafka.utils.Utils.inLock
 import kafka.utils.ZkUtils._
 import kafka.utils.{ShutdownableThread, SystemTime}
 import kafka.common.TopicAndPartition
@@ -38,7 +40,8 @@ import java.util.concurrent.atomic.AtomicInteger
 class ConsumerFetcherManager(private val consumerIdString: String,
                              private val config: ConsumerConfig,
                              private val zkClient : ZkClient)
-        extends AbstractFetcherManager("ConsumerFetcherManager-%d".format(SystemTime.milliseconds), 1) {
+        extends AbstractFetcherManager("ConsumerFetcherManager-%d".format(SystemTime.milliseconds),
+                                       config.clientId, config.numConsumerFetchers) {
   private var partitionMap: immutable.Map[TopicAndPartition, PartitionTopicInfo] = null
   private var cluster: Cluster = null
   private val noLeaderPartitionSet = new mutable.HashSet[TopicAndPartition]
@@ -50,72 +53,64 @@ class ConsumerFetcherManager(private val consumerIdString: String,
   private class LeaderFinderThread(name: String) extends ShutdownableThread(name) {
     // thread responsible for adding the fetcher to the right broker when leader is available
     override def doWork() {
+      val leaderForPartitionsMap = new HashMap[TopicAndPartition, Broker]
       lock.lock()
       try {
-        if (noLeaderPartitionSet.isEmpty) {
+        while (noLeaderPartitionSet.isEmpty) {
           trace("No partition for leader election.")
           cond.await()
         }
 
-        try {
-          trace("Partitions without leader %s".format(noLeaderPartitionSet))
-          val brokers = getAllBrokersInCluster(zkClient)
-          val topicsMetadata = ClientUtils.fetchTopicMetadata(noLeaderPartitionSet.map(m => m.topic).toSet,
-                                                              brokers,
-                                                              config.clientId,
-                                                              config.securityConfigFile,
-                                                              config.socketTimeoutMs,
-                                                              correlationId.getAndIncrement).topicsMetadata
-          if(logger.isDebugEnabled) topicsMetadata.foreach(topicMetadata => debug(topicMetadata.toString()))
-          val leaderForPartitionsMap = new HashMap[TopicAndPartition, Broker]
-          topicsMetadata.foreach { tmd =>
-            val topic = tmd.topic
-            tmd.partitionsMetadata.foreach { pmd =>
-              val topicAndPartition = TopicAndPartition(topic, pmd.partitionId)
-              if(pmd.leader.isDefined && noLeaderPartitionSet.contains(topicAndPartition)) {
-                val leaderBroker = pmd.leader.get
-                leaderForPartitionsMap.put(topicAndPartition, leaderBroker)
-              }
+        trace("Partitions without leader %s".format(noLeaderPartitionSet))
+        val brokers = getAllBrokersInCluster(zkClient)
+        val topicsMetadata = ClientUtils.fetchTopicMetadata(noLeaderPartitionSet.map(m => m.topic).toSet,
+                                                            brokers,
+                                                            config.clientId,
+                                                            config.securityConfigFile,
+                                                            config.socketTimeoutMs,
+                                                            correlationId.getAndIncrement).topicsMetadata
+        if(logger.isDebugEnabled) topicsMetadata.foreach(topicMetadata => debug(topicMetadata.toString()))
+        topicsMetadata.foreach { tmd =>
+          val topic = tmd.topic
+          tmd.partitionsMetadata.foreach { pmd =>
+            val topicAndPartition = TopicAndPartition(topic, pmd.partitionId)
+            if(pmd.leader.isDefined && noLeaderPartitionSet.contains(topicAndPartition)) {
+              val leaderBroker = pmd.leader.get
+              leaderForPartitionsMap.put(topicAndPartition, leaderBroker)
+              noLeaderPartitionSet -= topicAndPartition
             }
           }
-
-          leaderForPartitionsMap.foreach {
-            case(topicAndPartition, leaderBroker) =>
-              val pti = partitionMap(topicAndPartition)
-              try {
-                  addFetcher(topicAndPartition.topic, topicAndPartition.partition, pti.getFetchOffset(), leaderBroker)
-                  noLeaderPartitionSet -= topicAndPartition
-              } catch {
-                case t => {
-                  /*
-                   * If we are shutting down (e.g., due to a rebalance) propagate this exception upward to avoid
-                   * processing subsequent partitions without leader so the leader-finder-thread can exit.
-                   * It is unfortunate that we depend on the following behavior and we should redesign this: as part of
-                   * processing partitions, we catch the InterruptedException (thrown from addPartition's call to
-                   * lockInterruptibly) when adding partitions, thereby clearing the interrupted flag. If we process
-                   * more partitions, then the lockInterruptibly in addPartition will not throw an InterruptedException
-                   * and we can run into the deadlock described in KAFKA-914.
-                   */
-                  if (!isRunning.get())
-                    throw t
-                  else
-                    warn("Failed to add fetcher for %s to broker %s".format(topicAndPartition, leaderBroker), t)
-                }
-              }
-          }
-
-          shutdownIdleFetcherThreads()
-        } catch {
-          case t => {
+        }
+      } catch {
+        case t: Throwable => {
             if (!isRunning.get())
-              throw t /* See above for why we need to propagate this exception. */
+              throw t /* If this thread is stopped, propagate this exception to kill the thread. */
             else
               warn("Failed to find leader for %s".format(noLeaderPartitionSet), t)
           }
-        }
       } finally {
         lock.unlock()
       }
+
+      try {
+        addFetcherForPartitions(leaderForPartitionsMap.map{
+          case (topicAndPartition, broker) =>
+            topicAndPartition -> BrokerAndInitialOffset(broker, partitionMap(topicAndPartition).getFetchOffset())}
+        )
+      } catch {
+        case t: Throwable => {
+          if (!isRunning.get())
+            throw t /* If this thread is stopped, propagate this exception to kill the thread. */
+          else {
+            warn("Failed to add leader for partitions %s; will retry".format(leaderForPartitionsMap.keySet.mkString(",")), t)
+            lock.lock()
+            noLeaderPartitionSet ++= leaderForPartitionsMap.keySet
+            lock.unlock()
+          }
+        }
+      }
+
+      shutdownIdleFetcherThreads()
       Thread.sleep(config.refreshLeaderBackoffMs)
     }
   }
@@ -130,14 +125,11 @@ class ConsumerFetcherManager(private val consumerIdString: String,
     leaderFinderThread = new LeaderFinderThread(consumerIdString + "-leader-finder-thread")
     leaderFinderThread.start()
 
-    lock.lock()
-    try {
+    inLock(lock) {
       partitionMap = topicInfos.map(tpi => (TopicAndPartition(tpi.topic, tpi.partitionId), tpi)).toMap
       this.cluster = cluster
       noLeaderPartitionSet ++= topicInfos.map(tpi => TopicAndPartition(tpi.topic, tpi.partitionId))
       cond.signalAll()
-    } finally {
-      lock.unlock()
     }
   }
 
@@ -165,14 +157,11 @@ class ConsumerFetcherManager(private val consumerIdString: String,
 
   def addPartitionsWithError(partitionList: Iterable[TopicAndPartition]) {
     debug("adding partitions with error %s".format(partitionList))
-    lock.lock()
-    try {
+    inLock(lock) {
       if (partitionMap != null) {
         noLeaderPartitionSet ++= partitionList
         cond.signalAll()
       }
-    } finally {
-      lock.unlock()
     }
   }
 }

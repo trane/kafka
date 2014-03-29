@@ -19,7 +19,7 @@ package kafka.producer
 
 import java.net.SocketTimeoutException
 import junit.framework.Assert
-import kafka.admin.CreateTopicCommand
+import kafka.admin.AdminUtils
 import kafka.integration.KafkaServerTestHarness
 import kafka.message._
 import kafka.server.KafkaConfig
@@ -92,7 +92,7 @@ class SyncProducerTest extends JUnit3Suite with KafkaServerTestHarness {
     val props = TestUtils.getSyncProducerConfig(server.socketServer.port)
 
     val producer = new SyncProducer(new SyncProducerConfig(props))
-    CreateTopicCommand.createTopic(zkClient, "test", 1, 1)
+    AdminUtils.createTopic(zkClient, "test", 1, 1)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, "test", 0, 500)
 
     val message1 = new Message(new Array[Byte](configs(0).messageMaxBytes + 1))
@@ -111,6 +111,33 @@ class SyncProducerTest extends JUnit3Suite with KafkaServerTestHarness {
     Assert.assertEquals(1, response1.status.count(_._2.error != ErrorMapping.NoError))
     Assert.assertEquals(ErrorMapping.NoError, response2.status(TopicAndPartition("test", 0)).error)
     Assert.assertEquals(0, response2.status(TopicAndPartition("test", 0)).offset)
+  }
+
+  @Test
+  def testMessageSizeTooLargeWithAckZero() {
+    val server = servers.head
+
+    val props = TestUtils.getSyncProducerConfig(server.socketServer.port)
+    props.put("request.required.acks", "0")
+
+    val producer = new SyncProducer(new SyncProducerConfig(props))
+    AdminUtils.createTopic(zkClient, "test", 1, 1)
+    TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, "test", 0, 500)
+
+    // This message will be dropped silently since message size too large.
+    producer.send(TestUtils.produceRequest("test", 0,
+      new ByteBufferMessageSet(compressionCodec = NoCompressionCodec, messages = new Message(new Array[Byte](configs(0).messageMaxBytes + 1))), acks = 0))
+
+    // Send another message whose size is large enough to exceed the buffer size so
+    // the socket buffer will be flushed immediately;
+    // this send should fail since the socket has been closed
+    try {
+      producer.send(TestUtils.produceRequest("test", 0,
+        new ByteBufferMessageSet(compressionCodec = NoCompressionCodec, messages = new Message(new Array[Byte](configs(0).messageMaxBytes + 1))), acks = 0))
+    } catch {
+      case e : java.io.IOException => // success
+      case e2: Throwable => throw e2
+    }
   }
 
   @Test
@@ -135,9 +162,9 @@ class SyncProducerTest extends JUnit3Suite with KafkaServerTestHarness {
     }
 
     // #2 - test that we get correct offsets when partition is owned by broker
-    CreateTopicCommand.createTopic(zkClient, "topic1", 1, 1)
+    AdminUtils.createTopic(zkClient, "topic1", 1, 1)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, "topic1", 0, 500)
-    CreateTopicCommand.createTopic(zkClient, "topic3", 1, 1)
+    AdminUtils.createTopic(zkClient, "topic3", 1, 1)
     TestUtils.waitUntilLeaderIsElectedOrChanged(zkClient, "topic3", 0, 500)
 
     val response2 = producer.send(request)
@@ -178,7 +205,7 @@ class SyncProducerTest extends JUnit3Suite with KafkaServerTestHarness {
       Assert.fail("Should have received timeout exception since request handling is stopped.")
     } catch {
       case e: SocketTimeoutException => /* success */
-      case e => Assert.fail("Unexpected exception when expecting timeout: " + e)
+      case e: Throwable => Assert.fail("Unexpected exception when expecting timeout: " + e)
     }
     val t2 = SystemTime.milliseconds
     // make sure we don't wait fewer than timeoutMs for a response

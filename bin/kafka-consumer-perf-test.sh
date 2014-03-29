@@ -14,4 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-$(dirname $0)/kafka-run-class.sh kafka.perf.ConsumerPerformance $@
+export KAFKA_HEAP_OPTS="-Xmx512M"
+exec $(dirname $0)/kafka-run-class.sh kafka.perf.ConsumerPerformance $@

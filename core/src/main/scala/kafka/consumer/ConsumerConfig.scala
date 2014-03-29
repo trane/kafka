@@ -28,12 +28,13 @@ object ConsumerConfig extends Config {
   val SocketBufferSize = 64*1024
   val FetchSize = 1024 * 1024
   val MaxFetchSize = 10*FetchSize
+  val NumConsumerFetchers = 1
   val DefaultFetcherBackoffMs = 1000
   val AutoCommit = true
   val AutoCommitInterval = 60 * 1000
-  val MaxQueuedChunks = 10
+  val MaxQueuedChunks = 2
   val MaxRebalanceRetries = 4
-  val AutoOffsetReset = OffsetRequest.SmallestTimeString
+  val AutoOffsetReset = OffsetRequest.LargestTimeString
   val ConsumerTimeoutMs = -1
   val MinFetchBytes = 1
   val MaxFetchWaitMs = 100
@@ -93,6 +94,9 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
   
   /** the number of byes of messages to attempt to fetch */
   val fetchMessageMaxBytes = props.getInt("fetch.message.max.bytes", FetchSize)
+
+  /** the number threads used to fetch data */
+  val numConsumerFetchers = props.getInt("num.consumer.fetchers", NumConsumerFetchers)
   
   /** if true, periodically commit to zookeeper the offset of messages already fetched by the consumer */
   val autoCommitEnable = props.getBoolean("auto.commit.enable", AutoCommit)
@@ -100,8 +104,8 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
   /** the frequency in ms that the consumer offsets are committed to zookeeper */
   val autoCommitIntervalMs = props.getInt("auto.commit.interval.ms", AutoCommitInterval)
 
-  /** max number of messages buffered for consumption */
-  val queuedMaxMessages = props.getInt("queued.max.messages", MaxQueuedChunks)
+  /** max number of message chunks buffered for consumption, each chunk can be up to fetch.message.max.bytes*/
+  val queuedMaxMessages = props.getInt("queued.max.message.chunks", MaxQueuedChunks)
 
   /** max number of retries during rebalance */
   val rebalanceMaxRetries = props.getInt("rebalance.max.retries", MaxRebalanceRetries)

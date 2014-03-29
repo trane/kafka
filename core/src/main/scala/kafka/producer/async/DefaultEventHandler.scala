@@ -22,13 +22,14 @@ import kafka.message.{NoCompressionCodec, Message, ByteBufferMessageSet}
 import kafka.producer._
 import kafka.serializer.Encoder
 import kafka.utils.{Utils, Logging, SystemTime}
+import scala.util.Random
 import scala.collection.{Seq, Map}
 import scala.collection.mutable.{ArrayBuffer, HashMap, Set}
 import java.util.concurrent.atomic._
 import kafka.api.{TopicMetadata, ProducerRequest}
 
 class DefaultEventHandler[K,V](config: ProducerConfig,
-                               private val partitioner: Partitioner[K],
+                               private val partitioner: Partitioner,
                                private val encoder: Encoder[V],
                                private val keyEncoder: Encoder[K],
                                private val producerPool: ProducerPool,
@@ -36,59 +37,57 @@ class DefaultEventHandler[K,V](config: ProducerConfig,
   extends EventHandler[K,V] with Logging {
   val isSync = ("sync" == config.producerType)
 
-  val partitionCounter = new AtomicInteger(0)
   val correlationId = new AtomicInteger(0)
   val brokerPartitionInfo = new BrokerPartitionInfo(config, producerPool, topicPartitionInfos)
-
-  private val lock = new Object()
 
   private val topicMetadataRefreshInterval = config.topicMetadataRefreshIntervalMs
   private var lastTopicMetadataRefreshTime = 0L
   private val topicMetadataToRefresh = Set.empty[String]
+  private val sendPartitionPerTopicCache = HashMap.empty[String, Int]
 
   private val producerStats = ProducerStatsRegistry.getProducerStats(config.clientId)
   private val producerTopicStats = ProducerTopicStatsRegistry.getProducerTopicStats(config.clientId)
 
   def handle(events: Seq[KeyedMessage[K,V]]) {
-    lock synchronized {
-      val serializedData = serialize(events)
-      serializedData.foreach {
-        keyed =>
-          val dataSize = keyed.message.payloadSize
-          producerTopicStats.getProducerTopicStats(keyed.topic).byteRate.mark(dataSize)
-          producerTopicStats.getProducerAllTopicsStats.byteRate.mark(dataSize)
+    val serializedData = serialize(events)
+    serializedData.foreach {
+      keyed =>
+        val dataSize = keyed.message.payloadSize
+        producerTopicStats.getProducerTopicStats(keyed.topic).byteRate.mark(dataSize)
+        producerTopicStats.getProducerAllTopicsStats.byteRate.mark(dataSize)
+    }
+    var outstandingProduceRequests = serializedData
+    var remainingRetries = config.messageSendMaxRetries + 1
+    val correlationIdStart = correlationId.get()
+    debug("Handling %d events".format(events.size))
+    while (remainingRetries > 0 && outstandingProduceRequests.size > 0) {
+      topicMetadataToRefresh ++= outstandingProduceRequests.map(_.topic)
+      if (topicMetadataRefreshInterval >= 0 &&
+          SystemTime.milliseconds - lastTopicMetadataRefreshTime > topicMetadataRefreshInterval) {
+        Utils.swallowError(brokerPartitionInfo.updateInfo(topicMetadataToRefresh.toSet, correlationId.getAndIncrement))
+        sendPartitionPerTopicCache.clear()
+        topicMetadataToRefresh.clear
+        lastTopicMetadataRefreshTime = SystemTime.milliseconds
       }
-      var outstandingProduceRequests = serializedData
-      var remainingRetries = config.messageSendMaxRetries + 1
-      val correlationIdStart = correlationId.get()
-      debug("Handling %d events".format(events.size))
-      while (remainingRetries > 0 && outstandingProduceRequests.size > 0) {
-        topicMetadataToRefresh ++= outstandingProduceRequests.map(_.topic)
-        if (topicMetadataRefreshInterval >= 0 &&
-            SystemTime.milliseconds - lastTopicMetadataRefreshTime > topicMetadataRefreshInterval) {
-          Utils.swallowError(brokerPartitionInfo.updateInfo(topicMetadataToRefresh.toSet, correlationId.getAndIncrement))
-          topicMetadataToRefresh.clear
-          lastTopicMetadataRefreshTime = SystemTime.milliseconds
-        }
-        outstandingProduceRequests = dispatchSerializedData(outstandingProduceRequests)
-        if (outstandingProduceRequests.size > 0) {
-          info("Back off for %d ms before retrying send. Remaining retries = %d".format(config.retryBackoffMs, remainingRetries-1))
-          // back off and update the topic metadata cache before attempting another send operation
-          Thread.sleep(config.retryBackoffMs)
-          // get topics of the outstanding produce requests and refresh metadata for those
-          Utils.swallowError(brokerPartitionInfo.updateInfo(outstandingProduceRequests.map(_.topic).toSet, correlationId.getAndIncrement))
-          remainingRetries -= 1
-          producerStats.resendRate.mark()
-        }
+      outstandingProduceRequests = dispatchSerializedData(outstandingProduceRequests)
+      if (outstandingProduceRequests.size > 0) {
+        info("Back off for %d ms before retrying send. Remaining retries = %d".format(config.retryBackoffMs, remainingRetries-1))
+        // back off and update the topic metadata cache before attempting another send operation
+        Thread.sleep(config.retryBackoffMs)
+        // get topics of the outstanding produce requests and refresh metadata for those
+        Utils.swallowError(brokerPartitionInfo.updateInfo(outstandingProduceRequests.map(_.topic).toSet, correlationId.getAndIncrement))
+        sendPartitionPerTopicCache.clear()
+        remainingRetries -= 1
+        producerStats.resendRate.mark()
       }
-      if(outstandingProduceRequests.size > 0) {
-        producerStats.failedSendRate.mark()
-        val correlationIdEnd = correlationId.get()
-        error("Failed to send requests for topics %s with correlation ids in [%d,%d]"
-          .format(outstandingProduceRequests.map(_.topic).toSet.mkString(","),
-          correlationIdStart, correlationIdEnd-1))
-        throw new FailedToSendMessageException("Failed to send messages after " + config.messageSendMaxRetries + " tries.", null)
-      }
+    }
+    if(outstandingProduceRequests.size > 0) {
+      producerStats.failedSendRate.mark()
+      val correlationIdEnd = correlationId.get()
+      error("Failed to send requests for topics %s with correlation ids in [%d,%d]"
+        .format(outstandingProduceRequests.map(_.topic).toSet.mkString(","),
+        correlationIdStart, correlationIdEnd-1))
+      throw new FailedToSendMessageException("Failed to send messages after " + config.messageSendMaxRetries + " tries.", null)
     }
   }
 
@@ -126,11 +125,11 @@ class DefaultEventHandler[K,V](config: ProducerConfig,
     events.map{e =>
       try {
         if(e.hasKey)
-          serializedMessages += KeyedMessage[K,Message](topic = e.topic, key = e.key, message = new Message(key = keyEncoder.toBytes(e.key), bytes = encoder.toBytes(e.message)))
+          serializedMessages += new KeyedMessage[K,Message](topic = e.topic, key = e.key, partKey = e.partKey, message = new Message(key = keyEncoder.toBytes(e.key), bytes = encoder.toBytes(e.message)))
         else
-          serializedMessages += KeyedMessage[K,Message](topic = e.topic, key = null.asInstanceOf[K], message = new Message(bytes = encoder.toBytes(e.message)))
+          serializedMessages += new KeyedMessage[K,Message](topic = e.topic, key = e.key, partKey = e.partKey, message = new Message(bytes = encoder.toBytes(e.message)))
       } catch {
-        case t =>
+        case t: Throwable =>
           producerStats.serializationErrorRate.mark()
           if (isSync) {
             throw t
@@ -149,7 +148,7 @@ class DefaultEventHandler[K,V](config: ProducerConfig,
     try {
       for (message <- messages) {
         val topicPartitionsList = getPartitionListForTopic(message)
-        val partitionIndex = getPartition(message.topic, message.key, topicPartitionsList)
+        val partitionIndex = getPartition(message.topic, message.partitionKey, topicPartitionsList)
         val brokerPartition = topicPartitionsList(partitionIndex)
 
         // postpone the failure until the send operation, so that requests for other brokers are handled correctly
@@ -179,7 +178,7 @@ class DefaultEventHandler[K,V](config: ProducerConfig,
     }catch {    // Swallow recoverable exceptions and return None so that they can be retried.
       case ute: UnknownTopicOrPartitionException => warn("Failed to collate messages by topic,partition due to: " + ute.getMessage); None
       case lnae: LeaderNotAvailableException => warn("Failed to collate messages by topic,partition due to: " + lnae.getMessage); None
-      case oe => error("Failed to collate messages by topic, partition due to: " + oe.getMessage); None
+      case oe: Throwable => error("Failed to collate messages by topic, partition due to: " + oe.getMessage); None
     }
   }
 
@@ -196,28 +195,40 @@ class DefaultEventHandler[K,V](config: ProducerConfig,
   /**
    * Retrieves the partition id and throws an UnknownTopicOrPartitionException if
    * the value of partition is not between 0 and numPartitions-1
+   * @param topic The topic
    * @param key the partition key
    * @param topicPartitionList the list of available partitions
    * @return the partition id
    */
-  private def getPartition(topic: String, key: K, topicPartitionList: Seq[PartitionAndLeader]): Int = {
+  private def getPartition(topic: String, key: Any, topicPartitionList: Seq[PartitionAndLeader]): Int = {
     val numPartitions = topicPartitionList.size
     if(numPartitions <= 0)
       throw new UnknownTopicOrPartitionException("Topic " + topic + " doesn't exist")
     val partition =
       if(key == null) {
-        // If the key is null, we don't really need a partitioner so we just send to the next
-        // available partition
-        val availablePartitions = topicPartitionList.filter(_.leaderBrokerIdOpt.isDefined)
-        if (availablePartitions.isEmpty)
-          throw new LeaderNotAvailableException("No leader for any partition in topic " + topic)
-        val index = Utils.abs(partitionCounter.getAndIncrement()) % availablePartitions.size
-        availablePartitions(index).partitionId
+        // If the key is null, we don't really need a partitioner
+        // So we look up in the send partition cache for the topic to decide the target partition
+        val id = sendPartitionPerTopicCache.get(topic)
+        id match {
+          case Some(partitionId) =>
+            // directly return the partitionId without checking availability of the leader,
+            // since we want to postpone the failure until the send operation anyways
+            partitionId
+          case None =>
+            val availablePartitions = topicPartitionList.filter(_.leaderBrokerIdOpt.isDefined)
+            if (availablePartitions.isEmpty)
+              throw new LeaderNotAvailableException("No leader for any partition in topic " + topic)
+            val index = Utils.abs(Random.nextInt) % availablePartitions.size
+            val partitionId = availablePartitions(index).partitionId
+            sendPartitionPerTopicCache.put(topic, partitionId)
+            partitionId
+        }
       } else
         partitioner.partition(key, numPartitions)
     if(partition < 0 || partition >= numPartitions)
       throw new UnknownTopicOrPartitionException("Invalid partition id: " + partition + " for topic " + topic +
         "; Valid values are in the inclusive range of [0, " + (numPartitions-1) + "]")
+    trace("Assigning message of topic %s and key %s to a selected partition %d".format(topic, if (key == null) "[none]" else key.toString, partition))
     partition
   }
 
@@ -250,7 +261,7 @@ class DefaultEventHandler[K,V](config: ProducerConfig,
           if (logger.isTraceEnabled) {
             val successfullySentData = response.status.filter(_._2.error == ErrorMapping.NoError)
             successfullySentData.foreach(m => messagesPerTopic(m._1).foreach(message =>
-              trace("Successfully sent message: %s".format(Utils.readString(message.message.payload)))))
+              trace("Successfully sent message: %s".format(if(message.message.isNull) null else Utils.readString(message.message.payload)))))
           }
           val failedPartitionsAndStatus = response.status.filter(_._2.error != ErrorMapping.NoError).toSeq
           failedTopicPartitions = failedPartitionsAndStatus.map(partitionStatus => partitionStatus._1)
@@ -265,8 +276,9 @@ class DefaultEventHandler[K,V](config: ProducerConfig,
             warn("Produce request with correlation id %d failed due to %s".format(currentCorrelationId, errorString))
           }
           failedTopicPartitions
-        } else
+        } else {
           Seq.empty[TopicAndPartition]
+        }
       } catch {
         case t: Throwable =>
           warn("Failed to send producer request with correlation id %d to broker %d with data for partitions %s"

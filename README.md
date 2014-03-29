@@ -1,59 +1,81 @@
-# Kafka is a distributed publish/subscribe messaging system #
+Apache Kafka
+=================
+See our [web site](http://kafka.apache.org) for details on the project.
 
-It is designed to support the following
+### Building a jar and running it ###
+    ./gradlew jar  
 
-* Persistent messaging with O(1) disk structures that provide constant time performance even with many TB of stored messages.
-* High-throughput: even with very modest hardware Kafka can support hundreds of thousands of messages per second.
-* Explicit support for partitioning messages over Kafka servers and distributing consumption over a cluster of consumer machines while maintaining per-partition ordering semantics.
-* Support for parallel data load into Hadoop.
+Follow instuctions in http://kafka.apache.org/documentation.html#quickstart
 
-Kafka is aimed at providing a publish-subscribe solution that can handle all activity stream data and processing on a consumer-scale web site. This kind of activity (page views, searches, and other user actions) are a key ingredient in many of the social feature on the modern web. This data is typically handled by "logging" and ad hoc log aggregation solutions due to the throughput requirements. This kind of ad hoc solution is a viable solution to providing logging data to an offline analysis system like Hadoop, but is very limiting for building real-time processing. Kafka aims to unify offline and online processing by providing a mechanism for parallel load into Hadoop as well as the ability to partition real-time consumption over a cluster of machines.
+### Running unit tests ###
+    ./gradlew test
 
-See our [web site](http://kafka.apache.org/) for more details on the project.
+### Forcing re-running unit tests w/o code change ###
+    ./gradlew cleanTest test
 
-## Contribution ##
+### Running a particular unit test ###
+    ./gradlew -Dtest.single=RequestResponseSerializationTest core:test
 
-Kafka is a new project, and we are interested in building the community; we would welcome any thoughts or [patches](https://issues.apache.org/jira/browse/KAFKA). You can reach us [on the Apache mailing lists](http://kafka.apache.org/contact.html).
+### Building a binary release gzipped tar ball ###
+    ./gradlew clean
+    ./gradlew releaseTarGz  
 
-The Kafka code is available from:
- * git clone http://git-wip-us.apache.org/repos/asf/kafka.git kafka
+The release file can be found inside ./core/build/distributions/.
 
-To contribute you can follow:
- * https://cwiki.apache.org/confluence/display/KAFKA/Git+Workflow
+### Cleaning the build ###
+    ./gradlew clean
 
-To build for all supported versions of Scala: 
+### Running a task on a particular version of Scala ####
+either 2.8.0, 2.8.2, 2.9.1, 2.9.2 or 2.10.1) (If building a jar with a version other than 2.8.0, the scala version variable in bin/kafka-run-class.sh needs to be changed to run quick start.)
+    ./gradlew -PscalaVersion=2.9.1 jar
+    ./gradlew -PscalaVersion=2.9.1 test
+    ./gradlew -PscalaVersion=2.9.1 releaseTarGz
 
-1. ./sbt +package
+### Running a task for a specific project ###
+This is for 'core', 'perf', 'contrib:hadoop-consumer', 'contrib:hadoop-producer', 'examples' and 'clients'
+    ./gradlew core:jar
+    ./gradlew core:test
 
-To build for a particular version of Scala (either 2.8.0, 2.8.2, 2.9.1 or 2.9.2): 
+### Listing all gradle tasks ###
+    ./gradlew tasks
 
-1. ./sbt "++2.8.0 package" *or* ./sbt "++2.8.2 package" *or* ./sbt "++2.9.1 package" *or* ./sbt "++2.9.2 package"
+### Building IDE project ####
+    ./gradlew eclipse
+    ./gradlew idea
 
-Here are some useful sbt commands, to be executed at the sbt command prompt (./sbt). Prefixing with "++<version> " runs the
-command for a specific Scala version, prefixing with "+" will perform the action for all versions of Scala, and no prefix
-runs the command for the default (2.8.0) version of Scala. -
+### Building the jar for all scala versions and for all projects ###
+    ./gradlew jarAll
 
-tasks : Lists all the sbt commands and their descriptions
+### Running unit tests for all scala versions and for all projects ###
+    ./gradlew testAll
 
-clean : Deletes all generated files (the target directory).
+### Building a binary release gzipped tar ball for all scala versions ###
+    ./gradlew releaseTarGzAll
 
-compile : Compile all the sub projects, but not create the jars
+### Publishing the jar for all version of Scala and for all projects to maven ###
+    ./gradlew uploadArchivesAll
 
-test : Run all unit tests in all sub projects
+Please note for this to work you should create/update `~/.gradle/gradle.properties` and assign the following variables
 
-release-zip : Create all the jars, run unit tests and create a deployable release zip
+    mavenUrl=
+    mavenUsername=
+    mavenPassword=
+    signing.keyId=
+    signing.password=
+    signing.secretKeyRingFile=
 
-package: Creates jars for src, test, docs etc
+### Building the test jar ###
+    ./gradlew testJar
 
-projects : List all the sub projects 
+### Determining how transitive dependencies are added ###
+    ./gradlew core:dependencies --configuration runtime
 
-project sub_project_name : Switch to a particular sub-project. For example, to switch to the core kafka code, use "project core-kafka"
+### Contribution ###
 
-Following commands can be run only on a particular sub project -
+Apache Kafka interested in building the community; we would welcome any thoughts or [patches](https://issues.apache.org/jira/browse/KAFKA). You can reach us [on the Apache mailing lists](http://kafka.apache.org/contact.html).
 
-test-only package.test.TestName : Runs only the specified test in the current sub project
+To contribute follow the instructions here:
+ * http://kafka.apache.org/contributing.html
 
-run : Provides options to run any of the classes that have a main method. For example, you can switch to project java-examples, and run the examples there by executing "project java-examples" followed by "run" 
-
-For more details please see the [SBT documentation](https://github.com/harrah/xsbt/wiki)
-
+We also welcome patches for the website and documentation which can be found here:
+ * https://svn.apache.org/repos/asf/kafka/site

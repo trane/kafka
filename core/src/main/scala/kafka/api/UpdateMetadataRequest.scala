@@ -1,4 +1,20 @@
-package kafka.api
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ * 
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+ package kafka.api
 
 import java.nio.ByteBuffer
 import kafka.api.ApiUtils._
@@ -6,6 +22,7 @@ import kafka.cluster.Broker
 import kafka.common.{ErrorMapping, TopicAndPartition}
 import kafka.network.{BoundedByteBufferSend, RequestChannel}
 import kafka.network.RequestChannel.Response
+import collection.Set
 
 object UpdateMetadataRequest {
   val CurrentVersion = 0.shortValue
@@ -85,6 +102,15 @@ case class UpdateMetadataRequest (versionId: Short,
   }
 
   override def toString(): String = {
+    describe(true)
+  }
+
+  override def handleError(e: Throwable, requestChannel: RequestChannel, request: RequestChannel.Request): Unit = {
+    val errorResponse = new UpdateMetadataResponse(correlationId, ErrorMapping.codeFor(e.getCause.asInstanceOf[Class[Throwable]]))
+    requestChannel.sendResponse(new Response(request, new BoundedByteBufferSend(errorResponse)))
+  }
+
+  override def describe(details: Boolean): String = {
     val updateMetadataRequest = new StringBuilder
     updateMetadataRequest.append("Name:" + this.getClass.getSimpleName)
     updateMetadataRequest.append(";Version:" + versionId)
@@ -92,13 +118,9 @@ case class UpdateMetadataRequest (versionId: Short,
     updateMetadataRequest.append(";ControllerEpoch:" + controllerEpoch)
     updateMetadataRequest.append(";CorrelationId:" + correlationId)
     updateMetadataRequest.append(";ClientId:" + clientId)
-    updateMetadataRequest.append(";PartitionState:" + partitionStateInfos.mkString(","))
     updateMetadataRequest.append(";AliveBrokers:" + aliveBrokers.mkString(","))
+    if(details)
+      updateMetadataRequest.append(";PartitionState:" + partitionStateInfos.mkString(","))
     updateMetadataRequest.toString()
-  }
-
-  override def handleError(e: Throwable, requestChannel: RequestChannel, request: RequestChannel.Request): Unit = {
-    val errorResponse = new UpdateMetadataResponse(correlationId, ErrorMapping.codeFor(e.getCause.asInstanceOf[Class[Throwable]]))
-    requestChannel.sendResponse(new Response(request, new BoundedByteBufferSend(errorResponse)))
   }
 }

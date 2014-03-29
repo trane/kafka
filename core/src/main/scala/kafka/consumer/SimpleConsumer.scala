@@ -51,6 +51,7 @@ class SimpleConsumer(val host: String,
   private val blockingChannel = new BlockingChannel(host, port, secure, bufferSize, BlockingChannel.UseDefaultBufferSize, soTimeout)
   val brokerInfo = "host_%s-port_%s".format(host, port)
   private val fetchRequestAndResponseStats = FetchRequestAndResponseStatsRegistry.getFetchRequestAndResponseStats(clientId)
+  private var isClosed = false
 
   private def connect(): BlockingChannel = {
     close
@@ -72,7 +73,8 @@ class SimpleConsumer(val host: String,
 
   def close() {
     lock synchronized {
-        disconnect()
+      disconnect()
+      isClosed = true
     }
   }
   
@@ -84,19 +86,18 @@ class SimpleConsumer(val host: String,
         blockingChannel.send(request)
         response = blockingChannel.receive()
       } catch {
-        case e : java.io.IOException =>
-          info("Reconnect due to socket error: ", e)
+        case e : Throwable =>
+          warn("Reconnect due to socket error: %s".format(e.getMessage))
           // retry once
           try {
             reconnect()
             blockingChannel.send(request)
             response = blockingChannel.receive()
           } catch {
-            case ioe: java.io.IOException =>
+            case e: Throwable =>
               disconnect()
-              throw ioe
+              throw e
           }
-        case e => throw e
       }
       response
     }
@@ -136,8 +137,22 @@ class SimpleConsumer(val host: String,
    */
   def getOffsetsBefore(request: OffsetRequest) = OffsetResponse.readFrom(sendRequest(request).buffer)
 
+  /**
+   * Commit offsets for a topic
+   * @param request a [[kafka.api.OffsetCommitRequest]] object.
+   * @return a [[kafka.api.OffsetCommitResponse]] object.
+   */
+  def commitOffsets(request: OffsetCommitRequest) = OffsetCommitResponse.readFrom(sendRequest(request).buffer)
+
+  /**
+   * Fetch offsets for a topic
+   * @param request a [[kafka.api.OffsetFetchRequest]] object.
+   * @return a [[kafka.api.OffsetFetchResponse]] object.
+   */
+  def fetchOffsets(request: OffsetFetchRequest) = OffsetFetchResponse.readFrom(sendRequest(request).buffer)
+
   private def getOrMakeConnection() {
-    if(!blockingChannel.isConnected) {
+    if(!isClosed && !blockingChannel.isConnected) {
       connect()
     }
   }

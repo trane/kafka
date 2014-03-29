@@ -31,45 +31,54 @@ import kafka.admin._
 import kafka.common.{KafkaException, NoEpochForPartitionException}
 import kafka.controller.ReassignedPartitionsContext
 import kafka.controller.PartitionAndReplica
-import scala.Some
+import kafka.controller.KafkaController
+import scala.{collection, Some}
 import kafka.controller.LeaderIsrAndControllerEpoch
 import kafka.common.TopicAndPartition
+import kafka.utils.Utils.inLock
+import scala.collection
 
 object ZkUtils extends Logging {
   val ConsumersPath = "/consumers"
   val BrokerIdsPath = "/brokers/ids"
   val BrokerTopicsPath = "/brokers/topics"
+  val TopicConfigPath = "/config/topics"
+  val TopicConfigChangesPath = "/config/changes"
   val ControllerPath = "/controller"
   val ControllerEpochPath = "/controller_epoch"
   val ReassignPartitionsPath = "/admin/reassign_partitions"
+  val DeleteTopicsPath = "/admin/delete_topics"
   val PreferredReplicaLeaderElectionPath = "/admin/preferred_replica_election"
 
-  def getTopicPath(topic: String): String ={
+  def getTopicPath(topic: String): String = {
     BrokerTopicsPath + "/" + topic
   }
 
-  def getTopicPartitionsPath(topic: String): String ={
+  def getTopicPartitionsPath(topic: String): String = {
     getTopicPath(topic) + "/partitions"
   }
 
-  def getController(zkClient: ZkClient): Int= {
+  def getTopicConfigPath(topic: String): String =
+    TopicConfigPath + "/" + topic
+
+  def getDeleteTopicPath(topic: String): String =
+    DeleteTopicsPath + "/" + topic
+
+  def getController(zkClient: ZkClient): Int = {
     readDataMaybeNull(zkClient, ControllerPath)._1 match {
-      case Some(controller) => controller.toInt
+      case Some(controller) => KafkaController.parseControllerId(controller)
       case None => throw new KafkaException("Controller doesn't exist")
     }
   }
 
-  def getTopicPartitionPath(topic: String, partitionId: Int): String ={
+  def getTopicPartitionPath(topic: String, partitionId: Int): String =
     getTopicPartitionsPath(topic) + "/" + partitionId
-  }
 
-  def getTopicPartitionLeaderAndIsrPath(topic: String, partitionId: Int): String ={
+  def getTopicPartitionLeaderAndIsrPath(topic: String, partitionId: Int): String =
     getTopicPartitionPath(topic, partitionId) + "/" + "state"
-  }
 
-  def getSortedBrokerList(zkClient: ZkClient): Seq[Int] ={
+  def getSortedBrokerList(zkClient: ZkClient): Seq[Int] =
     ZkUtils.getChildren(zkClient, BrokerIdsPath).map(_.toInt).sorted
-  }
 
   def getAllBrokersInCluster(zkClient: ZkClient): Seq[Broker] = {
     val brokerIds = ZkUtils.getChildrenParentMayNotExist(zkClient, ZkUtils.BrokerIdsPath).sorted
@@ -89,6 +98,11 @@ object ZkUtils extends Logging {
 
   def getLeaderAndIsrForPartition(zkClient: ZkClient, topic: String, partition: Int):Option[LeaderAndIsr] = {
     getLeaderIsrAndEpochForPartition(zkClient, topic, partition).map(_.leaderAndIsr)
+  }
+
+  def setupCommonPaths(zkClient: ZkClient) {
+    for(path <- Seq(ConsumersPath, BrokerIdsPath, BrokerTopicsPath, TopicConfigChangesPath, TopicConfigPath, DeleteTopicsPath))
+      makeSurePersistentPathExists(zkClient, path)
   }
 
   def parseLeaderAndIsr(leaderAndIsrStr: String, topic: String, partition: Int, stat: Stat)
@@ -175,23 +189,23 @@ object ZkUtils extends Logging {
     }
   }
 
-  def isPartitionOnBroker(zkClient: ZkClient, topic: String, partition: Int, brokerId: Int): Boolean = {
-    val replicas = getReplicasForPartition(zkClient, topic, partition)
-    debug("The list of replicas for partition [%s,%d] is %s".format(topic, partition, replicas))
-    replicas.contains(brokerId.toString)
-  }
-
-  def registerBrokerInZk(zkClient: ZkClient, id: Int, host: String, port: Int, jmxPort: Int, secure: Boolean) {
+  def registerBrokerInZk(zkClient: ZkClient, id: Int, host: String, port: Int, timeout: Int, jmxPort: Int, secure: Boolean) {
     val brokerIdPath = ZkUtils.BrokerIdsPath + "/" + id
-    val brokerInfo =
-      Utils.mergeJsonFields(Utils.mapToJsonFields(Map("host" -> host), valueInQuotes = true) ++
-                             Utils.mapToJsonFields(Map("version" -> 1.toString, "jmx_port" -> jmxPort.toString, "port" -> port.toString, "secure" -> secure.toString),
-                                                   valueInQuotes = false))
+    val timestamp = SystemTime.milliseconds.toString
+    val brokerInfo = Json.encode(Map("version" -> 1, "host" -> host, "port" -> port, "jmx_port" -> jmxPort, "timestamp" -> timestamp, "secure" -> secure.toString))
+    val expectedBroker = new Broker(id, host, port, secure)
+
     try {
-      createEphemeralPathExpectConflict(zkClient, brokerIdPath, brokerInfo)
+      createEphemeralPathExpectConflictHandleZKBug(zkClient, brokerIdPath, brokerInfo, expectedBroker,
+        (brokerString: String, broker: Any) => Broker.createBroker(broker.asInstanceOf[Broker].id, brokerString).equals(broker.asInstanceOf[Broker]),
+        timeout)
+
     } catch {
       case e: ZkNodeExistsException =>
-        throw new RuntimeException("A broker is already registered on the path " + brokerIdPath + ". This probably " + "indicates that you either have configured a brokerid that is already in use, or " + "else you have shutdown this broker and restarted it faster than the zookeeper " + "timeout so it appears to be re-registering.")
+        throw new RuntimeException("A broker is already registered on the path " + brokerIdPath
+          + ". This probably " + "indicates that you either have configured a brokerid that is already in use, or "
+          + "else you have shutdown this broker and restarted it faster than the zookeeper "
+          + "timeout so it appears to be re-registering.")
     }
     info("Registered broker %d at path %s with address %s:%d.".format(id, brokerIdPath, host, port))
   }
@@ -201,18 +215,17 @@ object ZkUtils extends Logging {
     topicDirs.consumerOwnerDir + "/" + partition
   }
 
+
   def leaderAndIsrZkData(leaderAndIsr: LeaderAndIsr, controllerEpoch: Int): String = {
-    val isrInfo = Utils.seqToJson(leaderAndIsr.isr.map(_.toString), valueInQuotes = false)
-    Utils.mapToJson(Map("version" -> 1.toString, "leader" -> leaderAndIsr.leader.toString, "leader_epoch" -> leaderAndIsr.leaderEpoch.toString,
-                        "controller_epoch" -> controllerEpoch.toString, "isr" -> isrInfo), valueInQuotes = false)
+    Json.encode(Map("version" -> 1, "leader" -> leaderAndIsr.leader, "leader_epoch" -> leaderAndIsr.leaderEpoch,
+                    "controller_epoch" -> controllerEpoch, "isr" -> leaderAndIsr.isr))
   }
 
   /**
    * Get JSON partition to replica map from zookeeper.
    */
-  def replicaAssignmentZkdata(map: Map[String, Seq[Int]]): String = {
-    val jsonReplicaAssignmentMap = Utils.mapWithSeqValuesToJson(map)
-    Utils.mapToJson(Map("version" -> 1.toString, "partitions" -> jsonReplicaAssignmentMap), valueInQuotes = false)
+  def replicaAssignmentZkData(map: Map[String, Seq[Int]]): String = {
+    Json.encode(Map("version" -> 1, "partitions" -> map))
   }
 
   /**
@@ -261,7 +274,7 @@ object ZkUtils extends Logging {
           storedData = readData(client, path)._1
         } catch {
           case e1: ZkNoNodeException => // the node disappeared; treat as if node existed and let caller handles this
-          case e2 => throw e2
+          case e2: Throwable => throw e2
         }
         if (storedData == null || storedData != data) {
           info("conflict in " + path + " data: " + data + " stored data: " + storedData)
@@ -271,7 +284,48 @@ object ZkUtils extends Logging {
           info(path + " exists with value " + data + " during connection loss; this is ok")
         }
       }
-      case e2 => throw e2
+      case e2: Throwable => throw e2
+    }
+  }
+
+  /**
+   * Create an ephemeral node with the given path and data.
+   * Throw NodeExistsException if node already exists.
+   * Handles the following ZK session timeout bug:
+   *
+   * https://issues.apache.org/jira/browse/ZOOKEEPER-1740
+   *
+   * Upon receiving a NodeExistsException, read the data from the conflicted path and
+   * trigger the checker function comparing the read data and the expected data,
+   * If the checker function returns true then the above bug might be encountered, back off and retry;
+   * otherwise re-throw the exception
+   */
+  def createEphemeralPathExpectConflictHandleZKBug(zkClient: ZkClient, path: String, data: String, expectedCallerData: Any, checker: (String, Any) => Boolean, backoffTime: Int): Unit = {
+    while (true) {
+      try {
+        createEphemeralPathExpectConflict(zkClient, path, data)
+        return
+      } catch {
+        case e: ZkNodeExistsException => {
+          // An ephemeral node may still exist even after its corresponding session has expired
+          // due to a Zookeeper bug, in this case we need to retry writing until the previous node is deleted
+          // and hence the write succeeds without ZkNodeExistsException
+          ZkUtils.readDataMaybeNull(zkClient, path)._1 match {
+            case Some(writtenData) => {
+              if (checker(writtenData, expectedCallerData)) {
+                info("I wrote this conflicted ephemeral node [%s] at %s a while back in a different session, ".format(data, path)
+                  + "hence I will backoff for this node to be deleted by Zookeeper and retry")
+
+                Thread.sleep(backoffTime)
+              } else {
+                throw e
+              }
+            }
+            case None => // the node disappeared; retry creating the ephemeral node immediately
+          }
+        }
+        case e2: Throwable => throw e2
+      }
     }
   }
 
@@ -309,10 +363,10 @@ object ZkUtils extends Logging {
         } catch {
           case e: ZkNodeExistsException =>
             client.writeData(path, data)
-          case e2 => throw e2
+          case e2: Throwable => throw e2
         }
       }
-      case e2 => throw e2
+      case e2: Throwable => throw e2
     }
   }
 
@@ -365,10 +419,10 @@ object ZkUtils extends Logging {
         createParentPath(client, path)
         client.createEphemeral(path, data)
       }
-      case e2 => throw e2
+      case e2: Throwable => throw e2
     }
   }
-  
+
   def deletePath(client: ZkClient, path: String): Boolean = {
     try {
       client.delete(path)
@@ -377,7 +431,7 @@ object ZkUtils extends Logging {
         // this can happen during a connection loss event, return normally
         info(path + " deleted during connection loss; this is ok")
         false
-      case e2 => throw e2
+      case e2: Throwable => throw e2
     }
   }
 
@@ -388,17 +442,17 @@ object ZkUtils extends Logging {
       case e: ZkNoNodeException =>
         // this can happen during a connection loss event, return normally
         info(path + " deleted during connection loss; this is ok")
-      case e2 => throw e2
+      case e2: Throwable => throw e2
     }
   }
-  
+
   def maybeDeletePath(zkUrl: String, dir: String) {
     try {
       val zk = new ZkClient(zkUrl, 30*1000, 30*1000, ZKStringSerializer)
       zk.deleteRecursive(dir)
       zk.close()
     } catch {
-      case _ => // swallow
+      case _: Throwable => // swallow
     }
   }
 
@@ -415,7 +469,7 @@ object ZkUtils extends Logging {
                       } catch {
                         case e: ZkNoNodeException =>
                           (None, stat)
-                        case e2 => throw e2
+                        case e2: Throwable => throw e2
                       }
     dataAndStat
   }
@@ -433,7 +487,7 @@ object ZkUtils extends Logging {
       client.getChildren(path)
     } catch {
       case e: ZkNoNodeException => return Nil
-      case e2 => throw e2
+      case e2: Throwable => throw e2
     }
   }
 
@@ -443,8 +497,6 @@ object ZkUtils extends Logging {
   def pathExists(client: ZkClient, path: String): Boolean = {
     client.exists(path)
   }
-
-  def getLastPart(path : String) : String = path.substring(path.lastIndexOf('/') + 1)
 
   def getCluster(zkClient: ZkClient) : Cluster = {
     val cluster = new Cluster
@@ -515,17 +567,6 @@ object ZkUtils extends Logging {
     ret
   }
 
-  def getReplicaAssignmentFromPartitionAssignment(topicPartitionAssignment: mutable.Map[String, collection.Map[Int, Seq[Int]]]):
-  mutable.Map[(String, Int), Seq[Int]] = {
-    val ret = new mutable.HashMap[(String, Int), Seq[Int]]
-    for((topic, partitionAssignment) <- topicPartitionAssignment){
-      for((partition, replicaAssignment) <- partitionAssignment){
-        ret.put((topic, partition), replicaAssignment)
-      }
-    }
-    ret
-  }
-
   def getPartitionsForTopics(zkClient: ZkClient, topics: Seq[String]): mutable.Map[String, Seq[Int]] = {
     getPartitionAssignmentForTopics(zkClient, topics).map { topicAndPartitionMap =>
       val topic = topicAndPartitionMap._1
@@ -533,19 +574,6 @@ object ZkUtils extends Logging {
       debug("partition assignment of /brokers/topics/%s is %s".format(topic, partitionMap))
       (topic -> partitionMap.keys.toSeq.sortWith((s,t) => s < t))
     }
-  }
-
-  def getPartitionsAssignedToBroker(zkClient: ZkClient, topics: Seq[String], brokerId: Int): Seq[(String, Int)] = {
-    val topicsAndPartitions = getPartitionAssignmentForTopics(zkClient, topics)
-    topicsAndPartitions.map { topicAndPartitionMap =>
-      val topic = topicAndPartitionMap._1
-      val partitionMap = topicAndPartitionMap._2
-      val relevantPartitionsMap = partitionMap.filter( m => m._2.contains(brokerId) )
-      val relevantPartitions = relevantPartitionsMap.map(_._1)
-      for(relevantPartition <- relevantPartitions) yield {
-        (topic, relevantPartition)
-      }
-    }.flatten[(String, Int)].toSeq
   }
 
   def getPartitionsBeingReassigned(zkClient: ZkClient): Map[TopicAndPartition, ReassignedPartitionsContext] = {
@@ -578,17 +606,27 @@ object ZkUtils extends Logging {
     reassignedPartitions
   }
 
-  def getPartitionReassignmentZkData(partitionsToBeReassigned: Map[TopicAndPartition, Seq[Int]]): String = {
-    var jsonPartitionsData: mutable.ListBuffer[String] = ListBuffer[String]()
-    for (p <- partitionsToBeReassigned) {
-      val jsonReplicasData = Utils.seqToJson(p._2.map(_.toString), valueInQuotes = false)
-      val jsonTopicData = Utils.mapToJsonFields(Map("topic" -> p._1.topic), valueInQuotes = true)
-      val jsonPartitionData = Utils.mapToJsonFields(Map("partition" -> p._1.partition.toString, "replicas" -> jsonReplicasData),
-                                                    valueInQuotes = false)
-      jsonPartitionsData += Utils.mergeJsonFields(jsonTopicData ++ jsonPartitionData)
+  def parseTopicsData(jsonData: String): Seq[String] = {
+    var topics = List.empty[String]
+    Json.parseFull(jsonData) match {
+      case Some(m) =>
+        m.asInstanceOf[Map[String, Any]].get("topics") match {
+          case Some(partitionsSeq) =>
+            val mapPartitionSeq = partitionsSeq.asInstanceOf[Seq[Map[String, Any]]]
+            mapPartitionSeq.foreach(p => {
+              val topic = p.get("topic").get.asInstanceOf[String]
+              topics ++= List(topic)
+            })
+          case None =>
+        }
+      case None =>
     }
-    Utils.mapToJson(Map("version" -> 1.toString, "partitions" -> Utils.seqToJson(jsonPartitionsData.toSeq, valueInQuotes = false)),
-                    valueInQuotes = false)
+    topics
+  }
+
+  def getPartitionReassignmentZkData(partitionsToBeReassigned: Map[TopicAndPartition, Seq[Int]]): String = {
+    Json.encode(Map("version" -> 1, "partitions" -> partitionsToBeReassigned.map(e => Map("topic" -> e._1.topic, "partition" -> e._1.partition,
+                                                                                          "replicas" -> e._2))))
   }
 
   def updatePartitionReassignmentData(zkClient: ZkClient, partitionsToBeReassigned: Map[TopicAndPartition, Seq[Int]]) {
@@ -606,22 +644,11 @@ object ZkUtils extends Logging {
           case nne: ZkNoNodeException =>
             ZkUtils.createPersistentPath(zkClient, zkPath, jsonData)
             debug("Created path %s with %s for partition reassignment".format(zkPath, jsonData))
-          case e2 => throw new AdministrationException(e2.toString)
+          case e2: Throwable => throw new AdminOperationException(e2.toString)
         }
     }
   }
 
-  def getAllReplicasOnBroker(zkClient: ZkClient, topics: Seq[String], brokerIds: Seq[Int]): Set[PartitionAndReplica] = {
-    Set.empty[PartitionAndReplica] ++ brokerIds.map { brokerId =>
-      // read all the partitions and their assigned replicas into a map organized by
-      // { replica id -> partition 1, partition 2...
-      val partitionsAssignedToThisBroker = getPartitionsAssignedToBroker(zkClient, topics, brokerId)
-      if(partitionsAssignedToThisBroker.size == 0)
-        info("No state transitions triggered since no partitions are assigned to brokers %s".format(brokerIds.mkString(",")))
-      partitionsAssignedToThisBroker.map(p => new PartitionAndReplica(p._1, p._2, brokerId))
-    }.flatten
-  }
-  
   def getPartitionsUndergoingPreferredReplicaElection(zkClient: ZkClient): Set[TopicAndPartition] = {
     // read the partitions and their new replica list
     val jsonPartitionListOpt = readDataMaybeNull(zkClient, PreferredReplicaLeaderElectionPath)._1
@@ -705,8 +732,7 @@ class LeaderExistsOrChangedListener(topic: String,
   def handleDataChange(dataPath: String, data: Object) {
     val t = dataPath.split("/").takeRight(3).head
     val p = dataPath.split("/").takeRight(2).head.toInt
-    leaderLock.lock()
-    try {
+    inLock(leaderLock) {
       if(t == topic && p == partition){
         if(oldLeaderOpt == None){
           trace("In leader existence listener on partition [%s, %d], leader has been created".format(topic, partition))
@@ -721,18 +747,12 @@ class LeaderExistsOrChangedListener(topic: String,
         }
       }
     }
-    finally {
-      leaderLock.unlock()
-    }
   }
 
   @throws(classOf[Exception])
   def handleDataDeleted(dataPath: String) {
-    leaderLock.lock()
-    try {
+    inLock(leaderLock) {
       leaderExistsOrChanged.signal()
-    }finally {
-      leaderLock.unlock()
     }
   }
 }
@@ -765,7 +785,7 @@ class ZKGroupTopicDirs(group: String, topic: String) extends ZKGroupDirs(group) 
 
 class ZKConfig(props: VerifiableProperties) {
   /** ZK host string */
-  val zkConnect = props.getString("zookeeper.connect", null)
+  val zkConnect = props.getString("zookeeper.connect")
 
   /** zookeeper session timeout */
   val zkSessionTimeoutMs = props.getInt("zookeeper.session.timeout.ms", 6000)

@@ -18,11 +18,14 @@
 package kafka.utils
 
 import java.util.Arrays
+import java.util.concurrent.locks.ReentrantLock
 import java.nio.ByteBuffer
+import java.io._
 import org.apache.log4j.Logger
 import org.scalatest.junit.JUnitSuite
 import org.junit.Assert._
 import kafka.common.KafkaException
+import kafka.utils.Utils.inLock
 import org.junit.Test
 
 
@@ -61,6 +64,25 @@ class UtilsTest extends JUnitSuite {
       assertTrue(Arrays.equals(bytes, Utils.readBytes(ByteBuffer.wrap(bytes))))
     }
   }
+  
+  @Test
+  def testReplaceSuffix() {
+    assertEquals("blah.foo.text", Utils.replaceSuffix("blah.foo.txt", ".txt", ".text"))
+    assertEquals("blah.foo", Utils.replaceSuffix("blah.foo.txt", ".txt", ""))
+    assertEquals("txt.txt", Utils.replaceSuffix("txt.txt.txt", ".txt", ""))
+    assertEquals("foo.txt", Utils.replaceSuffix("foo", "", ".txt"))
+  }
+  
+  @Test
+  def testReadInt() {
+    val values = Array(0, 1, -1, Byte.MaxValue, Short.MaxValue, 2 * Short.MaxValue, Int.MaxValue/2, Int.MinValue/2, Int.MaxValue, Int.MinValue, Int.MaxValue)
+    val buffer = ByteBuffer.allocate(4 * values.size)
+    for(i <- 0 until values.length) {
+      buffer.putInt(i*4, values(i))
+      assertEquals("Written value should match read value.", values(i), Utils.readInt(buffer.array, i*4))
+    }
+
+  }
 
   @Test
   def testCsvList() {
@@ -73,5 +95,17 @@ class UtilsTest extends JUnitSuite {
     assertTrue(emptyListFromNullString!=null)
     assertTrue(emptyStringList.equals(emptyListFromNullString))
     assertTrue(emptyStringList.equals(emptyList))
+  }
+  
+  @Test
+  def testInLock() {
+    val lock = new ReentrantLock()
+    val result = inLock(lock) {
+      assertTrue("Should be in lock", lock.isHeldByCurrentThread)
+      1 + 1
+    }
+    assertEquals(2, result)
+    assertFalse("Should be unlocked", lock.isLocked)
+    
   }
 }

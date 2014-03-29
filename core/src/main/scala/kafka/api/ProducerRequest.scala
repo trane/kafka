@@ -123,6 +123,24 @@ case class ProducerRequest(versionId: Short = ProducerRequest.CurrentVersion,
   def numPartitions = data.size
 
   override def toString(): String = {
+    describe(true)
+  }
+
+  override  def handleError(e: Throwable, requestChannel: RequestChannel, request: RequestChannel.Request): Unit = {
+    if(request.requestObj.asInstanceOf[ProducerRequest].requiredAcks == 0) {
+        requestChannel.closeConnection(request.processor, request)
+    }
+    else {
+      val producerResponseStatus = data.map {
+        case (topicAndPartition, data) =>
+          (topicAndPartition, ProducerResponseStatus(ErrorMapping.codeFor(e.getClass.asInstanceOf[Class[Throwable]]), -1l))
+      }
+      val errorResponse = ProducerResponse(correlationId, producerResponseStatus)
+      requestChannel.sendResponse(new Response(request, new BoundedByteBufferSend(errorResponse)))
+    }
+  }
+
+  override def describe(details: Boolean): String = {
     val producerRequest = new StringBuilder
     producerRequest.append("Name: " + this.getClass.getSimpleName)
     producerRequest.append("; Version: " + versionId)
@@ -130,18 +148,11 @@ case class ProducerRequest(versionId: Short = ProducerRequest.CurrentVersion,
     producerRequest.append("; ClientId: " + clientId)
     producerRequest.append("; RequiredAcks: " + requiredAcks)
     producerRequest.append("; AckTimeoutMs: " + ackTimeoutMs + " ms")
-    producerRequest.append("; TopicAndPartition: " + topicPartitionMessageSizeMap.mkString(","))
+    if(details)
+      producerRequest.append("; TopicAndPartition: " + topicPartitionMessageSizeMap.mkString(","))
     producerRequest.toString()
   }
 
-  override  def handleError(e: Throwable, requestChannel: RequestChannel, request: RequestChannel.Request): Unit = {
-    val producerResponseStatus = data.map {
-      case (topicAndPartition, data) =>
-        (topicAndPartition, ProducerResponseStatus(ErrorMapping.codeFor(e.getClass.asInstanceOf[Class[Throwable]]), -1l))
-    }
-    val errorResponse = ProducerResponse(correlationId, producerResponseStatus)
-    requestChannel.sendResponse(new Response(request, new BoundedByteBufferSend(errorResponse)))
-  }
 
   def emptyData(){
     data.clear()

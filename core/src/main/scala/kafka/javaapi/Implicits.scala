@@ -34,10 +34,22 @@ private[javaapi] object Implicits extends Logging {
   implicit def toJavaOffsetResponse(response: kafka.api.OffsetResponse): kafka.javaapi.OffsetResponse =
     new kafka.javaapi.OffsetResponse(response)
 
+  implicit def toJavaOffsetFetchResponse(response: kafka.api.OffsetFetchResponse): kafka.javaapi.OffsetFetchResponse =
+    new kafka.javaapi.OffsetFetchResponse(response)
+
+  implicit def toJavaOffsetCommitResponse(response: kafka.api.OffsetCommitResponse): kafka.javaapi.OffsetCommitResponse =
+    new kafka.javaapi.OffsetCommitResponse(response)
+
   implicit def optionToJavaRef[T](opt: Option[T]): T = {
     opt match {
       case Some(obj) => obj
-      case None => null
+      case None => null.asInstanceOf[T]
     }
+  }
+
+  // used explicitly by ByteBufferMessageSet constructor as due to SI-4141 which affects Scala 2.8.1, implicits are not visible in constructors
+  implicit def javaListToScalaBuffer[A](l: java.util.List[A]) = {
+    import scala.collection.JavaConversions._
+    l: collection.mutable.Buffer[A]
   }
 }

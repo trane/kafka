@@ -25,6 +25,7 @@ import kafka.common.{ErrorMapping, TopicAndPartition}
 import kafka.consumer.ConsumerConfig
 import java.util.concurrent.atomic.AtomicInteger
 import kafka.network.RequestChannel
+import kafka.message.MessageSet
 
 
 case class PartitionFetchInfo(offset: Long, fetchSize: Int)
@@ -131,7 +132,7 @@ case class FetchRequest private[kafka] (versionId: Short = FetchRequest.CurrentV
     })
   }
 
-  def isFromFollower = replicaId != Request.OrdinaryConsumerId && replicaId != Request.DebuggingConsumerId
+  def isFromFollower = Request.isReplicaIdFromFollower(replicaId)
 
   def isFromOrdinaryConsumer = replicaId == Request.OrdinaryConsumerId
 
@@ -140,6 +141,19 @@ case class FetchRequest private[kafka] (versionId: Short = FetchRequest.CurrentV
   def numPartitions = requestInfo.size
 
   override def toString(): String = {
+    describe(true)
+  }
+
+  override  def handleError(e: Throwable, requestChannel: RequestChannel, request: RequestChannel.Request): Unit = {
+    val fetchResponsePartitionData = requestInfo.map {
+      case (topicAndPartition, data) =>
+        (topicAndPartition, FetchResponsePartitionData(ErrorMapping.codeFor(e.getClass.asInstanceOf[Class[Throwable]]), -1, MessageSet.Empty))
+    }
+    val errorResponse = FetchResponse(correlationId, fetchResponsePartitionData)
+    requestChannel.sendResponse(new RequestChannel.Response(request, new FetchResponseSend(errorResponse)))
+  }
+
+  override def describe(details: Boolean): String = {
     val fetchRequest = new StringBuilder
     fetchRequest.append("Name: " + this.getClass.getSimpleName)
     fetchRequest.append("; Version: " + versionId)
@@ -148,20 +162,11 @@ case class FetchRequest private[kafka] (versionId: Short = FetchRequest.CurrentV
     fetchRequest.append("; ReplicaId: " + replicaId)
     fetchRequest.append("; MaxWait: " + maxWait + " ms")
     fetchRequest.append("; MinBytes: " + minBytes + " bytes")
-    fetchRequest.append("; RequestInfo: " + requestInfo.mkString(","))
+    if(details)
+      fetchRequest.append("; RequestInfo: " + requestInfo.mkString(","))
     fetchRequest.toString()
   }
-
-  override  def handleError(e: Throwable, requestChannel: RequestChannel, request: RequestChannel.Request): Unit = {
-    val fetchResponsePartitionData = requestInfo.map {
-      case (topicAndPartition, data) =>
-        (topicAndPartition, FetchResponsePartitionData(ErrorMapping.codeFor(e.getClass.asInstanceOf[Class[Throwable]]), -1, null))
-    }
-    val errorResponse = FetchResponse(correlationId, fetchResponsePartitionData)
-    requestChannel.sendResponse(new RequestChannel.Response(request, new FetchResponseSend(errorResponse)))
-  }
 }
-
 
 @nonthreadsafe
 class FetchRequestBuilder() {
