@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -87,13 +87,13 @@ object ClientUtils extends Logging{
     if (securityConfigFile != null){
     	props.put("security.config.file", securityConfigFile)
     }
-    
+
     val producerConfig = new ProducerConfig(props)
     fetchTopicMetadata(topics, brokers, producerConfig, correlationId)
   }
 
   /**
-   * Parse a list of broker urls in the form host1:port1:secure1, host2:port2:secure2, ... 
+   * Parse a list of broker urls in the form host1:port1:secure1, host2:port2:secure2, ...
    */
   def parseBrokerList(brokerListStr: String): Seq[Broker] = {
     val brokersStr = Utils.parseCsvList(brokerListStr)
@@ -108,5 +108,5 @@ object ClientUtils extends Logging{
       new Broker(brokerId, hostName, port, secure)
     })
   }
-  
+
 }

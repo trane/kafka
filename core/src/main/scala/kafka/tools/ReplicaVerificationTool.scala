@@ -72,6 +72,10 @@ object ReplicaVerificationTool extends Logging {
                          .describedAs("bytes")
                          .ofType(classOf[java.lang.Integer])
                          .defaultsTo(ConsumerConfig.FetchSize)
+    val securityConfigFileOpt = parser.accepts("security.config.file", "Security config file to use for SSL.")
+                                  .withRequiredArg
+                                  .describedAs("property file")
+                                  .ofType(classOf[java.lang.String])
     val maxWaitMsOpt = parser.accepts("max-wait-ms", "The max amount of time each fetch request waits.")
                          .withRequiredArg
                          .describedAs("ms")
@@ -109,13 +113,14 @@ object ReplicaVerificationTool extends Logging {
     }
 
     val fetchSize = options.valueOf(fetchSizeOpt).intValue
+    val securityConfigFile = options.valueOf(securityConfigFileOpt)
     val maxWaitMs = options.valueOf(maxWaitMsOpt).intValue
     val initialOffsetTime = options.valueOf(initialOffsetTimeOpt).longValue
     val reportInterval = options.valueOf(reportIntervalOpt).longValue
     // getting topic metadata
     info("Getting topic metatdata...")
     val metadataTargetBrokers = ClientUtils.parseBrokerList(options.valueOf(brokerListOpt))
-    val topicsMetadataResponse = ClientUtils.fetchTopicMetadata(Set[String](), metadataTargetBrokers, clientId, maxWaitMs)
+    val topicsMetadataResponse = ClientUtils.fetchTopicMetadata(Set[String](), metadataTargetBrokers, clientId, securityConfigFile, maxWaitMs)
     val brokerMap = topicsMetadataResponse.extractBrokers(topicsMetadataResponse.topicsMetadata)
     val filteredTopicMetadata = topicsMetadataResponse.topicsMetadata.filter(
         topicMetadata => if (topicWhiteListFiler.isTopicAllowed(topicMetadata.topic)) true else false

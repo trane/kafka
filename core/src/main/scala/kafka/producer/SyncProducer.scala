@@ -5,7 +5,7 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
@@ -42,7 +42,7 @@ class SyncProducer(val config: SyncProducerConfig) extends Logging {
 
   private val blockingChannel = new BlockingChannel(config.host, config.port, config.secure, BlockingChannel.UseDefaultBufferSize,
     config.sendBufferBytes, config.requestTimeoutMs)
-  val brokerInfo = "host_%s-port_%s".format(config.host, config.port)
+  val brokerInfo = "host_%s-port_%s-secure_%s".format(config.host, config.port, config.secure)
   val producerRequestStats = ProducerRequestStatsRegistry.getProducerRequestStats(config.clientId)
 
   trace("Instantiating Scala Sync Producer")
@@ -139,7 +139,7 @@ class SyncProducer(val config: SyncProducerConfig) extends Logging {
       case e: Exception => error("Error on disconnect: ", e)
     }
   }
-    
+
   private def connect(): BlockingChannel = {
     if (!blockingChannel.isConnected && !shutdown) {
       try {

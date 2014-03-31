@@ -33,18 +33,18 @@ object BlockingChannel{
  *
  */
 @nonthreadsafe
-class BlockingChannel( val host: String, 
+class BlockingChannel( val host: String,
                        val port: Int,
                        val secure: Boolean,
-                       val readBufferSize: Int, 
-                       val writeBufferSize: Int, 
+                       val readBufferSize: Int,
+                       val writeBufferSize: Int,
                        val readTimeoutMs: Int ) extends Logging {
   private var connected = false
   private var channel: SocketChannel = null
   private var readChannel: ReadableByteChannel = null
   private var writeChannel: GatheringByteChannel = null
   private val lock = new Object()
-  
+
   def connect() = lock synchronized  {
     if(!connected) {
       channel = if (secure) SSLSocketChannel.makeSecureClientConnection(SocketChannel.open(), host, port) else SocketChannel.open()
@@ -66,13 +66,13 @@ class BlockingChannel( val host: String,
       val msg = "Created socket with SO_TIMEOUT = %d (requested %d), SO_RCVBUF = %d (requested %d), SO_SNDBUF = %d (requested %d)."
       debug(msg.format(channel.socket.getSoTimeout,
                        readTimeoutMs,
-                       channel.socket.getReceiveBufferSize, 
+                       channel.socket.getReceiveBufferSize,
                        readBufferSize,
                        channel.socket.getSendBufferSize,
                        writeBufferSize))
     }
   }
-  
+
   def disconnect() = lock synchronized {
     if(connected && channel != null) {
       debug("Disconnecting channel " + channel.socket.getRemoteSocketAddress());
@@ -87,7 +87,7 @@ class BlockingChannel( val host: String,
   }
 
   def isConnected = connected
-  
+
   def send(request: RequestOrResponse):Int = {
     if(!connected)
       throw new ClosedChannelException()
@@ -95,7 +95,7 @@ class BlockingChannel( val host: String,
     val send = new BoundedByteBufferSend(request)
     send.writeCompletely(writeChannel)
   }
-  
+
   def receive(): Receive = {
     if(!connected)
       throw new ClosedChannelException()
