@@ -97,7 +97,7 @@ class BrokerPartitionInfo(producerConfig: ProducerConfig,
     })
     producerPool.updateProducer(topicsMetadata)
   }
-  
+
 }
 
 case class PartitionAndLeader(topic: String, partitionId: Int, leaderBrokerIdOpt: Option[Int])

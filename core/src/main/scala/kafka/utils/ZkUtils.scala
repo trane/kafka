@@ -192,7 +192,7 @@ object ZkUtils extends Logging {
   def registerBrokerInZk(zkClient: ZkClient, id: Int, host: String, port: Int, timeout: Int, jmxPort: Int, secure: Boolean) {
     val brokerIdPath = ZkUtils.BrokerIdsPath + "/" + id
     val timestamp = SystemTime.milliseconds.toString
-    val brokerInfo = Json.encode(Map("version" -> 1, "host" -> host, "port" -> port, "jmx_port" -> jmxPort, "timestamp" -> timestamp, "secure" -> secure.toString))
+    val brokerInfo = Json.encode(Map("version" -> 1, "host" -> host, "port" -> port, "jmx_port" -> jmxPort, "timestamp" -> timestamp, "secure" -> secure))
     val expectedBroker = new Broker(id, host, port, secure)
 
     try {
@@ -207,7 +207,7 @@ object ZkUtils extends Logging {
           + "else you have shutdown this broker and restarted it faster than the zookeeper "
           + "timeout so it appears to be re-registering.")
     }
-    info("Registered broker %d at path %s with address %s:%d.".format(id, brokerIdPath, host, port))
+    info("Registered broker %d at path %s with address %s:%d:%s.".format(id, brokerIdPath, host, port, secure))
   }
 
   def getConsumerPartitionOwnerPath(group: String, topic: String, partition: Int): String = {

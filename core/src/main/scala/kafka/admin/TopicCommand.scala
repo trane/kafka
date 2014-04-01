@@ -170,7 +170,7 @@ object TopicCommand {
     }
   }
   
-  def formatBroker(broker: Broker) = broker.id + " (" + broker.host + ":" + broker.port + ")"
+  def formatBroker(broker: Broker) = broker.id + " (" + broker.host + ":" + broker.port + ":" + broker.secure + ")"
   
   def parseTopicConfigsToBeAdded(opts: TopicCommandOptions): Properties = {
     val configsToBeAdded = opts.options.valuesOf(opts.configOpt).map(_.split("""\s*=\s*"""))

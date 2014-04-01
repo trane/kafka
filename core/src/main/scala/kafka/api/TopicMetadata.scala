@@ -147,7 +147,7 @@ case class PartitionMetadata(partitionId: Int,
     partitionMetadataString.toString()
   }
 
-  private def formatBroker(broker: Broker) = broker.id + " (" + broker.host + ":" + broker.port + ")"
+  private def formatBroker(broker: Broker) = broker.id + " (" + broker.host + ":" + broker.port + ":" + broker.secure + ")"
 }
 
 

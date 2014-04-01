@@ -59,8 +59,7 @@ class BlockingChannel( val host: String,
       channel.connect(new InetSocketAddress(host, port))
 
       writeChannel = channel
-      //readChannel = Channels.newChannel(channel.socket().getInputStream)
-      readChannel = Channels.newChannel(Channels.newInputStream(channel))
+      readChannel = Channels.newChannel(channel.socket().getInputStream)
       connected = true
       // settings may not match what we requested above
       val msg = "Created socket with SO_TIMEOUT = %d (requested %d), SO_RCVBUF = %d (requested %d), SO_SNDBUF = %d (requested %d)."

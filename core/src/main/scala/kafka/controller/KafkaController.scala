@@ -210,7 +210,7 @@ class KafkaController(val config : KafkaConfig, zkClient: ZkClient) extends Logg
 
   def epoch = controllerContext.epoch
 
-  def clientId = "id_%d-host_%s-port_%d".format(config.brokerId, config.hostName, config.port)
+  def clientId = "id_%d-host_%s-port_%d-secure_%s".format(config.brokerId, config.hostName, config.port, config.secure)
 
   /**
    * On clean shutdown, the controller first determines the partitions that the
