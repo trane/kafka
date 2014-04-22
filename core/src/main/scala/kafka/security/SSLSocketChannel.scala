@@ -205,6 +205,22 @@ class SSLSocketChannel(val underlying: SocketChannel, val sslEngine: SSLEngine)
 
   def isConnectionPending(): Boolean = underlying.isConnectionPending
 
+  override def shutdownOutput() = underlying.shutdownOutput
+
+  override def shutdownInput() = underlying.shutdownInput
+
+  override def setOption[T](name: SocketOption[T], value: T): SocketChannel = underlying.setOption(name, value)
+
+  override def getOption[T](name: SocketOption[T]): T = underlying.getOption(name)
+
+  override def supportedOptions(): java.util.Set[SocketOption[_]] = underlying.supportedOptions
+
+  override def getRemoteAddress(): SocketAddress = underlying.getRemoteAddress
+
+  override def getLocalAddress(): SocketAddress = underlying.getLocalAddress
+
+  override def bind(local: SocketAddress) = underlying.bind(local)
+
   def connect(remote: SocketAddress): Boolean = {
     debug("SSLSocketChannel Connecting to Remote : " + remote);
     val ret = underlying.connect(remote)
